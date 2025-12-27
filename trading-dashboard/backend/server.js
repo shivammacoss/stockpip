@@ -26,6 +26,11 @@ const supportRoutes = require('./routes/support');
 const adminSupportRoutes = require('./routes/adminSupport');
 const adminChargesRoutes = require('./routes/adminCharges');
 const adminTradesRoutes = require('./routes/adminTrades');
+const accountTypesRoutes = require('./routes/accountTypes');
+const tradingAccountsRoutes = require('./routes/tradingAccounts');
+const adminAccountTypesRoutes = require('./routes/adminAccountTypes');
+const kycRoutes = require('./routes/kyc');
+const adminKycRoutes = require('./routes/adminKyc');
 
 const app = express();
 const server = http.createServer(app);
@@ -61,6 +66,9 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/copy-trade', copyTradeRoutes);
 app.use('/api/ib', ibRoutes);
 app.use('/api/support', supportRoutes);
+app.use('/api/account-types', accountTypesRoutes);
+app.use('/api/trading-accounts', tradingAccountsRoutes);
+app.use('/api/kyc', kycRoutes);
 // Admin routes - order matters! More specific routes first
 app.use('/api/admin/auth', adminAuthRoutes);
 app.use('/api/admin/users', adminUsersRoutes);
@@ -70,13 +78,15 @@ app.use('/api/admin/ib', adminIBRoutes);
 app.use('/api/admin/support', adminSupportRoutes);
 app.use('/api/admin/charges', adminChargesRoutes);
 app.use('/api/admin/trades', adminTradesRoutes);
+app.use('/api/admin/account-types', adminAccountTypesRoutes);
+app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
-    message: 'Bull4x Trading API is running',
+    message: 'Hcfinvest Trading API is running',
     timestamp: new Date().toISOString()
   });
 });
@@ -112,7 +122,7 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`
   ╔═══════════════════════════════════════════════╗
-  ║     Bull4x Trading API Server                 ║
+  ║     Hcfinvest Trading API Server              ║
   ║     Running on port ${PORT}                       ║
   ║     Environment: ${process.env.NODE_ENV || 'development'}              ║
   ║     WebSocket: Enabled (Socket.IO)            ║

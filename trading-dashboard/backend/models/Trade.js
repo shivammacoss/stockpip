@@ -6,6 +6,11 @@ const tradeSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  tradingAccount: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'TradingAccount',
+    default: null
+  },
   clientId: {
     type: String,
     default: null
@@ -53,7 +58,7 @@ const tradeSchema = new mongoose.Schema({
     type: Number,
     default: 100,
     min: 1,
-    max: 500
+    max: 2000
   },
   margin: {
     type: Number,

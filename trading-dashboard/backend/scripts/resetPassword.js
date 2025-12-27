@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Password Reset Utility for Bull4x
+ * Password Reset Utility for Hcfinvest
  * 
  * Usage:
- *   node scripts/resetPassword.js --type admin --email admin@bull4x.com --password NewPassword123
+ *   node scripts/resetPassword.js --type admin --email admin@hcfinvest.com --password NewPassword123
  *   node scripts/resetPassword.js --type user --email demo@demo.com --password demo123
  *   node scripts/resetPassword.js --hash MyPlainPassword  (just generate hash)
  */
@@ -26,7 +26,7 @@ async function hashPassword(plainPassword) {
 
 async function resetPassword(type, email, password) {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/bull4x_trading');
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/hcfinvest_trading');
     
     const collection = type === 'admin' ? 'admins' : 'users';
     const hashedPassword = await hashPassword(password);
@@ -74,7 +74,7 @@ Bull4x Password Reset Utility
 
 Usage:
   Reset admin password:
-    node scripts/resetPassword.js --type admin --email admin@bull4x.com --password Admin@123
+    node scripts/resetPassword.js --type admin --email admin@hcfinvest.com --password Admin@123
 
   Reset user password:
     node scripts/resetPassword.js --type user --email demo@demo.com --password demo123

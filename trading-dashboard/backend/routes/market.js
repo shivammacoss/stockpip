@@ -315,4 +315,76 @@ router.get('/quotes', async (req, res) => {
   }
 });
 
+// @route   GET /api/market/spreads
+// @desc    Get trading spreads for all instruments (admin configured)
+// @access  Public
+router.get('/spreads', async (req, res) => {
+  try {
+    const TradingCharge = require('../models/TradingCharge');
+    
+    // Get all active charges
+    const charges = await TradingCharge.find({ isActive: true });
+    
+    // Build spreads map
+    const spreads = {};
+    
+    // Default spreads by segment
+    const defaultSpreads = {
+      forex: 1.5,
+      metals: 30,
+      crypto: 50,
+      indices: 100
+    };
+    
+    // All symbols list
+    const symbols = [
+      'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'NZDUSD', 'USDCAD',
+      'EURGBP', 'EURJPY', 'GBPJPY', 'EURAUD', 'EURCAD', 'EURCHF', 'GBPAUD',
+      'GBPCAD', 'GBPCHF', 'AUDCAD', 'AUDCHF', 'AUDJPY', 'AUDNZD', 'CADJPY',
+      'CHFJPY', 'NZDCAD', 'NZDCHF', 'NZDJPY', 'CADCHF', 'EURNZD', 'GBPNZD',
+      'XAUUSD', 'XAGUSD',
+      'BTCUSD', 'ETHUSD', 'LTCUSD', 'XRPUSD',
+      'US30', 'US500', 'NAS100', 'UK100', 'GER40'
+    ];
+    
+    // Get segment for symbol
+    const getSegment = (symbol) => {
+      if (['XAUUSD', 'XAGUSD'].includes(symbol)) return 'metals';
+      if (['BTCUSD', 'ETHUSD', 'LTCUSD', 'XRPUSD'].includes(symbol)) return 'crypto';
+      if (['US30', 'US500', 'NAS100', 'UK100', 'GER40'].includes(symbol)) return 'indices';
+      return 'forex';
+    };
+    
+    // Find global charge
+    const globalCharge = charges.find(c => c.scopeType === 'global');
+    
+    // Build spreads for each symbol
+    for (const symbol of symbols) {
+      const segment = getSegment(symbol);
+      
+      // Priority: symbol > segment > global > default
+      const symbolCharge = charges.find(c => c.scopeType === 'symbol' && c.symbol === symbol);
+      const segmentCharge = charges.find(c => c.scopeType === 'segment' && c.segment === segment);
+      
+      if (symbolCharge && symbolCharge.spreadPips > 0) {
+        spreads[symbol] = symbolCharge.spreadPips;
+      } else if (segmentCharge && segmentCharge.spreadPips > 0) {
+        spreads[symbol] = segmentCharge.spreadPips;
+      } else if (globalCharge && globalCharge.spreadPips > 0) {
+        spreads[symbol] = globalCharge.spreadPips;
+      } else {
+        spreads[symbol] = defaultSpreads[segment];
+      }
+    }
+    
+    res.json({
+      success: true,
+      data: spreads
+    });
+  } catch (error) {
+    console.error('Get spreads error:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch spreads' });
+  }
+});
+
 module.exports = router;

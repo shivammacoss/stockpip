@@ -1,7 +1,7 @@
 {
-  "name": "bull4x-trading-backend",
+  "name": "hcfinvest-trading-backend",
   "version": "1.0.0",
-  "description": "Bull4x Trading Dashboard Backend",
+  "description": "Hcfinvest Trading Dashboard Backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

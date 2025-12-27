@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
+const TradingAccount = require('../models/TradingAccount');
+const AccountType = require('../models/AccountType');
 const { protectAdmin } = require('./adminAuth');
 
 // @route   GET /api/admin/users
@@ -252,6 +254,117 @@ router.get('/stats/summary', protectAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('Get stats error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   GET /api/admin/users/:id/trading-accounts
+// @desc    Get user's trading accounts
+// @access  Admin
+router.get('/:id/trading-accounts', protectAdmin, async (req, res) => {
+  try {
+    const accounts = await TradingAccount.find({ user: req.params.id })
+      .populate('accountType')
+      .sort({ createdAt: -1 });
+    
+    res.json({ success: true, data: accounts });
+  } catch (error) {
+    console.error('Get trading accounts error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   PUT /api/admin/users/:userId/trading-accounts/:accountId
+// @desc    Update user's trading account (leverage, balance, etc)
+// @access  Admin
+router.put('/:userId/trading-accounts/:accountId', protectAdmin, async (req, res) => {
+  try {
+    const { leverage, balance, status, nickname } = req.body;
+    
+    const account = await TradingAccount.findOne({ 
+      _id: req.params.accountId,
+      user: req.params.userId 
+    }).populate('accountType');
+    
+    if (!account) {
+      return res.status(404).json({ success: false, message: 'Trading account not found' });
+    }
+    
+    // Update leverage (admin can set any value up to 2000)
+    if (leverage !== undefined) {
+      if (leverage < 1 || leverage > 2000) {
+        return res.status(400).json({ success: false, message: 'Leverage must be between 1 and 2000' });
+      }
+      account.leverage = leverage;
+    }
+    
+    // Update balance
+    if (balance !== undefined) {
+      account.balance = balance;
+    }
+    
+    // Update status
+    if (status !== undefined) {
+      account.status = status;
+    }
+    
+    // Update nickname
+    if (nickname !== undefined) {
+      account.nickname = nickname;
+    }
+    
+    await account.save();
+    
+    res.json({ 
+      success: true, 
+      message: 'Trading account updated successfully',
+      data: account 
+    });
+  } catch (error) {
+    console.error('Update trading account error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   POST /api/admin/users/:id/trading-accounts
+// @desc    Create trading account for user
+// @access  Admin
+router.post('/:id/trading-accounts', protectAdmin, async (req, res) => {
+  try {
+    const { accountTypeId, leverage, balance, isDemo, nickname } = req.body;
+    
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    const accountType = await AccountType.findById(accountTypeId);
+    if (!accountType) {
+      return res.status(400).json({ success: false, message: 'Invalid account type' });
+    }
+    
+    // Admin can set custom leverage (up to 2000)
+    const selectedLeverage = leverage || accountType.maxLeverage;
+    
+    const account = await TradingAccount.create({
+      user: req.params.id,
+      accountType: accountType._id,
+      leverage: selectedLeverage,
+      balance: balance || 0,
+      isDemo: isDemo || false,
+      nickname: nickname || `${accountType.name} Account`,
+      status: 'active'
+    });
+    
+    await account.populate('accountType');
+    
+    res.json({ 
+      success: true, 
+      message: 'Trading account created successfully',
+      data: account 
+    });
+  } catch (error) {
+    console.error('Create trading account error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });

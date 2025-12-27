@@ -127,7 +127,7 @@ router.post('/', protect, [
       });
     }
 
-    const { symbol, type, orderType = 'market', amount, price, leverage = 100, stopLoss, takeProfit } = req.body;
+    const { symbol, type, orderType = 'market', amount, price, leverage = 100, stopLoss, takeProfit, tradingAccountId } = req.body;
 
     let trade;
     
@@ -139,7 +139,8 @@ router.post('/', protect, [
         amount,
         leverage,
         stopLoss,
-        takeProfit
+        takeProfit,
+        tradingAccountId
       });
 
       // Check if user is a trade master and mirror to followers
@@ -202,11 +203,13 @@ router.post('/', protect, [
   }
 });
 
-// @route   PUT /api/trades/:id/close
+// @route   PUT/POST /api/trades/:id/close
 // @desc    Close a trade
 // @access  Private
-router.put('/:id/close', protect, async (req, res) => {
+const closeTradeHandler = async (req, res) => {
   try {
+    console.log(`[CloseTrade] Attempting to close trade ${req.params.id} for user ${req.user.id}`);
+    
     const trade = await Trade.findOne({
       _id: req.params.id,
       user: req.user.id,
@@ -214,11 +217,16 @@ router.put('/:id/close', protect, async (req, res) => {
     });
 
     if (!trade) {
+      // Check if trade exists at all
+      const anyTrade = await Trade.findOne({ _id: req.params.id });
+      console.log(`[CloseTrade] Trade not found with status open. Exists: ${!!anyTrade}, Status: ${anyTrade?.status}, Owner: ${anyTrade?.user}`);
       return res.status(404).json({
         success: false,
         message: 'Trade not found or already closed'
       });
     }
+    
+    console.log(`[CloseTrade] Found trade: ${trade.symbol} ${trade.type} ${trade.amount} lots`);
 
     // Get current market price
     const price = tradeEngine.getPrice(trade.symbol);
@@ -246,7 +254,11 @@ router.put('/:id/close', protect, async (req, res) => {
       message: error.message || 'Server error'
     });
   }
-});
+};
+
+// Register both PUT and POST for close trade
+router.put('/:id/close', protect, closeTradeHandler);
+router.post('/:id/close', protect, closeTradeHandler);
 
 // @route   PUT /api/trades/:id/modify
 // @desc    Modify trade SL/TP

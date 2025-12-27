@@ -54,6 +54,37 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  // KYC Verification
+  kycVerified: {
+    type: Boolean,
+    default: false
+  },
+  kycStatus: {
+    type: String,
+    enum: ['not_submitted', 'pending', 'approved', 'rejected'],
+    default: 'not_submitted'
+  },
+  kycDocuments: {
+    idType: { type: String, enum: ['', 'passport', 'national_id', 'driving_license'], default: '' },
+    idNumber: { type: String, default: '' },
+    idFrontImage: { type: String, default: '' },
+    idBackImage: { type: String, default: '' },
+    selfieImage: { type: String, default: '' },
+    addressProof: { type: String, default: '' },
+    submittedAt: { type: Date },
+    verifiedAt: { type: Date },
+    rejectionReason: { type: String, default: '' }
+  },
+  dateOfBirth: {
+    type: Date
+  },
+  address: {
+    street: { type: String, default: '' },
+    city: { type: String, default: '' },
+    state: { type: String, default: '' },
+    postalCode: { type: String, default: '' },
+    country: { type: String, default: '' }
+  },
   // IB Referral tracking
   referredBy: {
     type: mongoose.Schema.Types.ObjectId,

@@ -4,7 +4,7 @@ const { body, validationResult } = require('express-validator');
 const Admin = require('../models/Admin');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bull4x-admin-secret-key-2024';
+const JWT_SECRET = process.env.JWT_SECRET || 'hcfinvest-admin-secret-key-2024';
 
 // Generate admin token
 const generateAdminToken = (id) => {
@@ -125,7 +125,7 @@ router.post('/setup', async (req, res) => {
     }
 
     const admin = await Admin.create({
-      email: 'admin@bull4x.com',
+      email: 'admin@hcfinvest.com',
       password: 'Admin@123',
       username: 'superadmin',
       firstName: 'Super',

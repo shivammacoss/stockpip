@@ -5,6 +5,7 @@
 
 const Trade = require('../models/Trade');
 const User = require('../models/User');
+const TradingAccount = require('../models/TradingAccount');
 const Transaction = require('../models/Transaction');
 const TradingCharge = require('../models/TradingCharge');
 
@@ -106,24 +107,91 @@ class TradeEngine {
   }
 
   /**
+   * Check if market is open for a symbol
+   */
+  checkMarketHours(symbol) {
+    const now = new Date();
+    const utcDay = now.getUTCDay(); // 0 = Sunday, 6 = Saturday
+    const utcHour = now.getUTCHours();
+    
+    // Crypto markets (BTC, ETH, etc.) - 24/7
+    if (symbol.includes('BTC') || symbol.includes('ETH') || symbol.includes('LTC') || 
+        symbol.includes('XRP') || symbol.includes('USDT') || symbol.includes('DOGE') ||
+        symbol.includes('ADA') || symbol.includes('SOL') || symbol.includes('LINK')) {
+      return { isOpen: true, message: 'Crypto markets are open 24/7' };
+    }
+    
+    // Forex markets - Sunday 5PM EST to Friday 5PM EST (22:00 UTC Sunday to 22:00 UTC Friday)
+    // Closed on weekends
+    if (utcDay === 0 && utcHour < 22) {
+      return { isOpen: false, message: 'Forex market opens Sunday 10:00 PM UTC' };
+    }
+    if (utcDay === 6) {
+      return { isOpen: false, message: 'Forex market closed on Saturday. Opens Sunday 10:00 PM UTC' };
+    }
+    if (utcDay === 5 && utcHour >= 22) {
+      return { isOpen: false, message: 'Forex market closed for weekend. Opens Sunday 10:00 PM UTC' };
+    }
+    
+    // All other times forex is open
+    return { isOpen: true, message: 'Market is open' };
+  }
+
+  /**
    * Execute market order
    */
   async executeMarketOrder(userId, orderData) {
-    const { symbol, type, amount, leverage = 1, stopLoss, takeProfit } = orderData;
+    const { symbol, type, amount, stopLoss, takeProfit, tradingAccountId, leverage: requestedLeverage } = orderData;
+    
+    // Check if market is open
+    const marketStatus = this.checkMarketHours(symbol);
+    if (!marketStatus.isOpen) {
+      throw new Error(`Market closed for ${symbol}. ${marketStatus.message}`);
+    }
     
     const price = this.getPrice(symbol);
     if (!price) {
-      throw new Error(`Invalid symbol: ${symbol}`);
+      throw new Error(`Invalid symbol: ${symbol}. Market may be closed.`);
     }
 
     // Get execution price (ask for buy, bid for sell)
     const executionPrice = type === 'buy' ? price.ask : price.bid;
     
+    // Get user and their active trading account FIRST to get leverage
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+    
+    // Find trading account - use provided ID or find most recent active one
+    let tradingAccount;
+    if (tradingAccountId) {
+      tradingAccount = await TradingAccount.findOne({ 
+        _id: tradingAccountId,
+        user: userId, 
+        status: 'active'
+      });
+    }
+    if (!tradingAccount) {
+      tradingAccount = await TradingAccount.findOne({ 
+        user: userId, 
+        status: 'active',
+        isDemo: false 
+      }).sort({ createdAt: -1 });
+    }
+    
+    // User can select leverage up to account max, default to account leverage
+    const maxAccountLeverage = tradingAccount?.leverage || 100;
+    const tradeLeverage = Math.min(requestedLeverage || maxAccountLeverage, maxAccountLeverage);
+    const usesTradingAccount = !!tradingAccount;
+    const availableBalance = usesTradingAccount ? tradingAccount.balance : user.balance;
+    
+    // Available margin = balance * leverage
+    const availableMargin = availableBalance * tradeLeverage;
+    
     // Get charges for this trade
     const charges = await this.getChargesForTrade(symbol, userId);
     
-    // Calculate margin required
-    const margin = this.calculateMargin(symbol, amount, executionPrice, leverage);
+    // Calculate margin required (using trade-specific leverage)
+    const margin = this.calculateMargin(symbol, amount, executionPrice, tradeLeverage);
     
     // Calculate fees and costs
     const feePercentage = charges.feePercentage / 100;
@@ -135,12 +203,10 @@ class TradeEngine {
     const spreadCost = this.calculateSpreadCost(symbol, amount, charges.spreadPips);
     
     const totalRequired = margin + fee + commission + spreadCost;
-
-    // Check user balance
-    const user = await User.findById(userId);
-    if (!user) throw new Error('User not found');
-    if (user.balance < totalRequired) {
-      throw new Error(`Insufficient balance. Required: $${totalRequired.toFixed(2)}, Available: $${user.balance.toFixed(2)}`);
+    
+    // Check if user has enough balance for this trade
+    if (availableBalance < totalRequired) {
+      throw new Error(`Insufficient balance. Required: $${totalRequired.toFixed(2)}, Available: $${availableBalance.toFixed(2)}`);
     }
 
     // Validate SL/TP
@@ -162,14 +228,17 @@ class TradeEngine {
     }
 
     // Generate client ID
-    const clientId = `${user.firstName?.substring(0,2) || 'US'}${user._id.toString().slice(-6)}`.toUpperCase();
+    const clientId = usesTradingAccount 
+      ? tradingAccount.accountNumber 
+      : `${user.firstName?.substring(0,2) || 'US'}${user._id.toString().slice(-6)}`.toUpperCase();
 
     console.log(`[TradeEngine] Creating trade for user ${userId}: ${type} ${amount} ${symbol} @ ${executionPrice}`);
-    console.log(`[TradeEngine] User balance before: ${user.balance}, Required: ${totalRequired}`);
+    console.log(`[TradeEngine] Using ${usesTradingAccount ? 'Trading Account' : 'User Balance'}: ${availableBalance}, Required: ${totalRequired}`);
 
     // Create trade
     const trade = await Trade.create({
       user: userId,
+      tradingAccount: usesTradingAccount ? tradingAccount._id : null,
       clientId,
       tradeSource: 'manual',
       symbol: symbol.toUpperCase(),
@@ -177,7 +246,7 @@ class TradeEngine {
       orderType: 'market',
       amount,
       price: executionPrice,
-      leverage,
+      leverage: tradeLeverage,
       stopLoss,
       takeProfit,
       fee,
@@ -190,12 +259,19 @@ class TradeEngine {
 
     console.log(`[TradeEngine] Trade created: ${trade._id}`);
 
-    // Deduct margin from balance
-    const balanceBefore = user.balance;
-    user.balance -= totalRequired;
-    await user.save();
+    // Deduct margin from trading account or user balance
+    const balanceBefore = availableBalance;
+    if (usesTradingAccount) {
+      tradingAccount.balance -= totalRequired;
+      tradingAccount.margin += margin;
+      tradingAccount.totalTrades += 1;
+      await tradingAccount.save();
+    } else {
+      user.balance -= totalRequired;
+      await user.save();
+    }
     
-    console.log(`[TradeEngine] Balance deducted. Before: ${balanceBefore}, After: ${user.balance}`);
+    console.log(`[TradeEngine] Balance deducted. Before: ${balanceBefore}, After: ${usesTradingAccount ? tradingAccount.balance : user.balance}`);
 
     // Create transaction record
     await Transaction.create({
@@ -204,9 +280,9 @@ class TradeEngine {
       amount: -totalRequired,
       description: `Margin for ${type.toUpperCase()} ${amount} ${symbol} @ ${executionPrice}`,
       balanceBefore,
-      balanceAfter: user.balance,
+      balanceAfter: usesTradingAccount ? tradingAccount.balance : user.balance,
       status: 'completed',
-      reference: trade._id
+      reference: `${trade._id}_open_${Date.now()}`
     });
 
     // Notify user
@@ -402,10 +478,10 @@ class TradeEngine {
         userPos.totalMargin += trade.margin || 0;
       }
 
-      // Check margin levels for each user
-      for (const [userId, positions] of userPositions) {
-        await this.checkMarginLevel(userId, positions);
-      }
+      // Check margin levels for each user - DISABLED temporarily to fix false stop-outs
+      // for (const [userId, positions] of userPositions) {
+      //   await this.checkMarginLevel(userId, positions);
+      // }
     } catch (err) {
       console.error('[TradeEngine] Error checking open positions:', err);
     } finally {
@@ -414,41 +490,29 @@ class TradeEngine {
   }
 
   /**
-   * Check margin level and trigger stop-out if needed
+   * Check margin level and trigger auto square-off if needed
+   * NO margin notifications - just auto close when balance depleted
    */
   async checkMarginLevel(userId, positions) {
     try {
-      const user = await User.findById(userId);
-      if (!user) return;
+      // Get trading account with leverage - must match the one used for trading
+      const tradingAccount = await TradingAccount.findOne({ 
+        user: userId, 
+        status: 'active'
+      }).sort({ createdAt: -1 }).populate('accountType');
+      
+      // If no trading account or no open positions, skip
+      if (!tradingAccount || positions.trades.length === 0) return;
 
-      const equity = user.balance + positions.totalPnL;
-      const marginLevel = positions.totalMargin > 0 ? (equity / positions.totalMargin) * 100 : 100;
-
-      // Initialize margin call tracking if not exists
-      if (!this.marginCallSent) this.marginCallSent = new Map();
-
-      // Margin call at 100% - only send once per user until they recover
-      if (marginLevel <= 100 && marginLevel > 50) {
-        const lastSent = this.marginCallSent.get(userId.toString());
-        const now = Date.now();
-        // Only send margin call every 60 seconds per user
-        if (!lastSent || (now - lastSent) > 60000) {
-          this.marginCallSent.set(userId.toString(), now);
-          this.notifyUser(userId, 'marginCall', {
-            equity,
-            marginLevel: marginLevel.toFixed(2),
-            message: `⚠️ MARGIN CALL: Your margin level is ${marginLevel.toFixed(2)}%. Please deposit funds or close positions.`
-          });
-        }
-      } else if (marginLevel > 100) {
-        // Clear margin call tracking when recovered
-        this.marginCallSent.delete(userId.toString());
-      }
-
-      // Stop-out at 50% or equity <= 0
-      if (marginLevel <= 50 || equity <= 0) {
-        console.log(`[TradeEngine] Stop-out triggered for user ${userId}. Equity: ${equity}, Margin Level: ${marginLevel}%`);
-        await this.stopOut(userId, positions.trades, equity, marginLevel);
+      const balance = tradingAccount.balance;
+      const equity = balance + positions.totalPnL;
+      
+      // Auto Square Off ONLY when:
+      // Equity goes to 0 or negative (losses exceed balance)
+      // This means user's floating losses have consumed their entire balance
+      if (equity <= 0) {
+        console.log(`[TradeEngine] AUTO SQUARE OFF for user ${userId}. Balance: ${balance}, Equity: ${equity}, PnL: ${positions.totalPnL}, Trades: ${positions.trades.length}`);
+        await this.stopOut(userId, positions.trades, equity, 0);
       }
     } catch (err) {
       console.error('[TradeEngine] Error checking margin level:', err);
@@ -506,11 +570,41 @@ class TradeEngine {
       trade.closeReason = reason;
       await trade.save();
 
-      // Update user balance
+      // Update trading account or user balance
       const user = await User.findById(trade.user);
-      if (user) {
+      let tradingAccount = null;
+      if (trade.tradingAccount) {
+        tradingAccount = await TradingAccount.findById(trade.tradingAccount);
+      }
+      
+      const usesTradingAccount = !!tradingAccount;
+      const marginReturn = trade.margin || ((trade.amount * trade.price) / trade.leverage);
+      
+      if (usesTradingAccount) {
+        const balanceBefore = tradingAccount.balance;
+        tradingAccount.balance += marginReturn + pnl;
+        tradingAccount.margin -= trade.margin;
+        if (tradingAccount.margin < 0) tradingAccount.margin = 0;
+        if (pnl >= 0) {
+          tradingAccount.winningTrades += 1;
+        } else {
+          tradingAccount.losingTrades += 1;
+        }
+        await tradingAccount.save();
+        
+        // Create transaction record
+        await Transaction.create({
+          user: trade.user,
+          type: pnl >= 0 ? 'trade_profit' : 'trade_loss',
+          amount: marginReturn + pnl,
+          description: `Closed ${trade.type.toUpperCase()} ${trade.amount} ${trade.symbol} @ ${closePrice} (${reason})`,
+          balanceBefore,
+          balanceAfter: tradingAccount.balance,
+          status: 'completed',
+          reference: `${trade._id}_close_${Date.now()}`
+        });
+      } else if (user) {
         const balanceBefore = user.balance;
-        const marginReturn = trade.margin || ((trade.amount * trade.price) / trade.leverage);
         user.balance += marginReturn + pnl;
         await user.save();
 
@@ -523,8 +617,11 @@ class TradeEngine {
           balanceBefore,
           balanceAfter: user.balance,
           status: 'completed',
-          reference: trade._id
+          reference: `${trade._id}_close_${Date.now()}`
         });
+      }
+      
+      if (user) {
 
         // Notify user
         const emoji = pnl >= 0 ? '✅' : '❌';

@@ -95,13 +95,13 @@ ibSchema.pre('save', async function(next) {
     this.ibId = `IB${String(count + 1001).padStart(4, '0')}`;
   }
   if (!this.referralCode) {
-    this.referralCode = `BULL4X-${this.ibId}`;
+    this.referralCode = `HCF-${this.ibId}`;
   }
   next();
 });
 
 // Get referral link
-ibSchema.methods.getReferralLink = function(baseUrl = 'https://bull4x.com') {
+ibSchema.methods.getReferralLink = function(baseUrl = 'https://hcfinvest.com') {
   return `${baseUrl}/register?ref=${this.ibId}`;
 };
 

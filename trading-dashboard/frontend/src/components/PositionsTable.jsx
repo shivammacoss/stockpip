@@ -14,6 +14,8 @@ const PositionsTable = () => {
   const [modifyingTrade, setModifyingTrade] = useState(null)
   const [modifyForm, setModifyForm] = useState({ stopLoss: '', takeProfit: '' })
   const [showCloseDialog, setShowCloseDialog] = useState(null) // Trade to confirm close
+  const [showOneClick, setShowOneClick] = useState(false)
+  const [quickLots, setQuickLots] = useState(0.01)
   
   const styles = {
     container: { backgroundColor: 'var(--bg-secondary)', borderTop: '1px solid var(--border-color)' },
@@ -128,9 +130,10 @@ const PositionsTable = () => {
   const closeTrade = async (tradeId) => {
     try {
       setClosingTrade(tradeId)
-      const res = await axios.put(`/api/trades/${tradeId}/close`, {}, getAuthHeader())
+      const res = await axios.post(`/api/trades/${tradeId}/close`, {}, getAuthHeader())
       if (res.data.success) {
         fetchPositions()
+        window.dispatchEvent(new Event('tradeClosed'))
       }
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to close trade')
@@ -214,18 +217,99 @@ const PositionsTable = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className="px-4 py-3 text-sm font-medium transition-colors"
+              className="px-3 sm:px-4 py-3 text-xs sm:text-sm font-medium transition-colors"
               style={{ 
                 color: activeTab === tab.id ? 'var(--text-primary)' : 'var(--text-secondary)',
                 borderBottom: activeTab === tab.id ? '2px solid var(--accent-green)' : '2px solid transparent'
               }}
             >
-              {tab.label} ({tab.count})
+              <span className="hidden sm:inline">{tab.label}</span>
+              <span className="sm:hidden">{tab.id === 'positions' ? 'Pos' : tab.id === 'pending' ? 'Pend' : tab.id === 'history' ? 'Hist' : 'Canc'}</span>
+              ({tab.count})
             </button>
           ))}
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          {/* One Click Trading Toggle Switch */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>One Click</span>
+            <button
+              onClick={() => setShowOneClick(!showOneClick)}
+              className="relative w-10 h-5 rounded-full transition-all"
+              style={{ backgroundColor: showOneClick ? '#3b82f6' : 'var(--bg-hover)' }}
+              title="Toggle One Click Trading"
+            >
+              <div 
+                className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all shadow"
+                style={{ left: showOneClick ? '22px' : '2px' }}
+              />
+            </button>
+          </div>
+          
+          {/* Quick Trade Buttons - Show when One Click enabled */}
+          {showOneClick && (
+            <div className="flex items-center gap-1.5 rounded-full px-2 py-1" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}>
+              <button
+                onClick={async () => {
+                  const symbol = localStorage.getItem('selectedSymbol') || 'XAUUSD'
+                  const activeAccount = JSON.parse(localStorage.getItem('activeTradingAccount') || '{}')
+                  console.log('[QuickTrade] SELL', symbol, quickLots, activeAccount._id)
+                  try {
+                    const token = localStorage.getItem('token')
+                    const res = await axios.post('/api/trades', { 
+                      symbol, type: 'sell', amount: quickLots, orderType: 'market',
+                      tradingAccountId: activeAccount._id 
+                    }, { headers: { Authorization: `Bearer ${token}` }})
+                    console.log('[QuickTrade] Response:', res.data)
+                    if (res.data.success) {
+                      fetchPositions()
+                      window.dispatchEvent(new Event('tradeCreated'))
+                    }
+                  } catch (err) { 
+                    console.error('[QuickTrade] Error:', err.response?.data || err)
+                    alert(err.response?.data?.message || 'Trade failed')
+                  }
+                }}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all hover:scale-110"
+                style={{ backgroundColor: '#ef4444', color: 'white' }}
+              >S</button>
+              <input 
+                type="number" 
+                value={quickLots} 
+                onChange={(e) => setQuickLots(parseFloat(e.target.value) || 0.01)} 
+                step="0.01" 
+                min="0.01"
+                className="w-14 text-center text-xs font-semibold rounded px-1 py-1" 
+                style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', border: 'none' }} 
+              />
+              <button
+                onClick={async () => {
+                  const symbol = localStorage.getItem('selectedSymbol') || 'XAUUSD'
+                  const activeAccount = JSON.parse(localStorage.getItem('activeTradingAccount') || '{}')
+                  console.log('[QuickTrade] BUY', symbol, quickLots, activeAccount._id)
+                  try {
+                    const token = localStorage.getItem('token')
+                    const res = await axios.post('/api/trades', { 
+                      symbol, type: 'buy', amount: quickLots, orderType: 'market',
+                      tradingAccountId: activeAccount._id 
+                    }, { headers: { Authorization: `Bearer ${token}` }})
+                    console.log('[QuickTrade] Response:', res.data)
+                    if (res.data.success) {
+                      fetchPositions()
+                      window.dispatchEvent(new Event('tradeCreated'))
+                    }
+                  } catch (err) { 
+                    console.error('[QuickTrade] Error:', err.response?.data || err)
+                    alert(err.response?.data?.message || 'Trade failed')
+                  }
+                }}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all hover:scale-110"
+                style={{ backgroundColor: '#3b82f6', color: 'white' }}
+              >B</button>
+            </div>
+          )}
+          
           <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
             Floating P/L:
           </span>
@@ -240,7 +324,7 @@ const PositionsTable = () => {
       
       {/* Table Header */}
       <div 
-        className="grid grid-cols-12 gap-2 px-4 py-2 text-xs"
+        className="grid grid-cols-12 gap-2 px-4 py-2 text-xs items-center"
         style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
       >
         <div>Time</div>
@@ -254,7 +338,7 @@ const PositionsTable = () => {
         <div>Charges</div>
         <div>Spread</div>
         <div>P/L</div>
-        <div></div>
+        <div>Action</div>
       </div>
       
       {/* Table Body */}
@@ -281,8 +365,8 @@ const PositionsTable = () => {
                   <span 
                     className="px-2 py-0.5 rounded text-xs font-medium uppercase"
                     style={{ 
-                      backgroundColor: pos.type === 'buy' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-                      color: pos.type === 'buy' ? 'var(--accent-green)' : 'var(--accent-red)'
+                      backgroundColor: pos.type === 'buy' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                      color: pos.type === 'buy' ? '#3b82f6' : 'var(--accent-red)'
                     }}
                   >
                     {pos.type}
@@ -341,8 +425,8 @@ const PositionsTable = () => {
                 <span 
                   className="px-2 py-0.5 rounded text-xs font-medium uppercase"
                   style={{ 
-                    backgroundColor: order.type === 'buy' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-                    color: order.type === 'buy' ? 'var(--accent-green)' : 'var(--accent-red)'
+                    backgroundColor: order.type === 'buy' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                    color: order.type === 'buy' ? '#3b82f6' : 'var(--accent-red)'
                   }}
                 >
                   {order.type}
@@ -384,8 +468,8 @@ const PositionsTable = () => {
                 <span 
                   className="px-2 py-0.5 rounded text-xs font-medium uppercase"
                   style={{ 
-                    backgroundColor: trade.type === 'buy' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-                    color: trade.type === 'buy' ? 'var(--accent-green)' : 'var(--accent-red)'
+                    backgroundColor: trade.type === 'buy' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                    color: trade.type === 'buy' ? '#3b82f6' : 'var(--accent-red)'
                   }}
                 >
                   {trade.type}
@@ -475,7 +559,7 @@ const PositionsTable = () => {
       {/* Close Trade Confirmation Dialog */}
       {showCloseDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-sm rounded-2xl p-6" style={{ backgroundColor: 'var(--bg-card)' }}>
+          <div className="w-full max-w-md rounded-2xl p-6" style={{ backgroundColor: 'var(--bg-card)' }}>
             <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
               Close Trade
             </h3>
@@ -486,7 +570,7 @@ const PositionsTable = () => {
               </div>
               <div className="flex justify-between mb-2">
                 <span style={{ color: 'var(--text-muted)' }}>Type</span>
-                <span className="uppercase" style={{ color: showCloseDialog.type === 'buy' ? '#22c55e' : '#ef4444' }}>
+                <span className="uppercase" style={{ color: showCloseDialog.type === 'buy' ? '#3b82f6' : '#ef4444' }}>
                   {showCloseDialog.type}
                 </span>
               </div>
@@ -500,36 +584,101 @@ const PositionsTable = () => {
               </div>
               <div className="flex justify-between">
                 <span style={{ color: 'var(--text-muted)' }}>Floating P/L</span>
-                <span style={{ color: calculatePnL(showCloseDialog) >= 0 ? '#22c55e' : '#ef4444' }}>
+                <span style={{ color: calculatePnL(showCloseDialog) >= 0 ? '#3b82f6' : '#ef4444' }}>
                   {calculatePnL(showCloseDialog) >= 0 ? '+' : ''}${calculatePnL(showCloseDialog).toFixed(2)}
                 </span>
               </div>
             </div>
-            <p className="text-sm text-center mb-4" style={{ color: 'var(--text-secondary)' }}>
-              Are you sure you want to close this position at market price?
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowCloseDialog(null)}
-                className="flex-1 py-3 rounded-xl font-medium"
-                style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)' }}
-              >
-                Cancel
-              </button>
+            
+            {/* Close Options */}
+            <div className="grid grid-cols-2 gap-2 mb-4">
               <button
                 onClick={async () => {
                   await closeTrade(showCloseDialog._id)
                   setShowCloseDialog(null)
                 }}
                 disabled={closingTrade === showCloseDialog._id}
-                className="flex-1 py-3 rounded-xl font-medium text-white flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600"
+                className="py-2.5 rounded-xl font-medium text-white flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600"
               >
-                {closingTrade === showCloseDialog._id ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : null}
-                Close Trade
+                {closingTrade === showCloseDialog._id ? <Loader2 size={14} className="animate-spin" /> : null}
+                Close This
+              </button>
+              <button
+                onClick={async () => {
+                  setClosingTrade('all')
+                  let closed = 0
+                  console.log('Closing all trades:', positions.length)
+                  for (const trade of positions) {
+                    console.log('Closing trade:', trade._id, trade.symbol)
+                    try { 
+                      const res = await axios.post(`/api/trades/${trade._id}/close`, {}, getAuthHeader())
+                      console.log('Close response:', res.data)
+                      if (res.data.success) closed++
+                    } catch (err) { 
+                      console.error('Close error:', err.response?.data || err.message)
+                    }
+                  }
+                  console.log('Closed', closed, 'trades')
+                  await fetchPositions()
+                  window.dispatchEvent(new Event('tradeClosed'))
+                  setClosingTrade(null)
+                  setShowCloseDialog(null)
+                }}
+                className="py-2.5 rounded-xl font-medium text-white bg-gray-600 hover:bg-gray-700 flex items-center justify-center gap-2"
+                disabled={closingTrade === 'all'}
+              >
+                {closingTrade === 'all' && <Loader2 size={14} className="animate-spin" />}
+                Close All ({positions.length})
+              </button>
+              <button
+                onClick={async () => {
+                  setClosingTrade('profit')
+                  const profitTrades = positions.filter(p => calculatePnL(p) > 0)
+                  for (const trade of profitTrades) {
+                    try { 
+                      await axios.post(`/api/trades/${trade._id}/close`, {}, getAuthHeader()) 
+                    } catch (err) { console.error('Close error:', err) }
+                  }
+                  fetchPositions()
+                  window.dispatchEvent(new Event('tradeClosed'))
+                  setClosingTrade(null)
+                  setShowCloseDialog(null)
+                }}
+                className="py-2.5 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 flex items-center justify-center gap-2"
+                disabled={closingTrade === 'profit'}
+              >
+                {closingTrade === 'profit' && <Loader2 size={14} className="animate-spin" />}
+                Close Profit ({positions.filter(p => calculatePnL(p) > 0).length})
+              </button>
+              <button
+                onClick={async () => {
+                  setClosingTrade('loss')
+                  const lossTrades = positions.filter(p => calculatePnL(p) < 0)
+                  for (const trade of lossTrades) {
+                    try { 
+                      await axios.post(`/api/trades/${trade._id}/close`, {}, getAuthHeader()) 
+                    } catch (err) { console.error('Close error:', err) }
+                  }
+                  fetchPositions()
+                  window.dispatchEvent(new Event('tradeClosed'))
+                  setClosingTrade(null)
+                  setShowCloseDialog(null)
+                }}
+                className="py-2.5 rounded-xl font-medium text-white bg-orange-600 hover:bg-orange-700 flex items-center justify-center gap-2"
+                disabled={closingTrade === 'loss'}
+              >
+                {closingTrade === 'loss' && <Loader2 size={14} className="animate-spin" />}
+                Close Loss ({positions.filter(p => calculatePnL(p) < 0).length})
               </button>
             </div>
+            
+            <button
+              onClick={() => setShowCloseDialog(null)}
+              className="w-full py-2.5 rounded-xl font-medium"
+              style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)' }}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

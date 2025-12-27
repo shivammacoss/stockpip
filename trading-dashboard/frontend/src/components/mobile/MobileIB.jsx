@@ -1,8 +1,18 @@
 import React, { useState, useEffect } from 'react'
 import { ArrowLeft, Users, DollarSign, Copy, Loader2, TrendingUp, Wallet, Clock, Share2, CheckCircle, RefreshCw, UserPlus, ArrowDownToLine } from 'lucide-react'
 import axios from 'axios'
+import { useTheme } from '../../context/ThemeContext'
 
 const MobileIB = ({ onBack }) => {
+  const { isDark } = useTheme()
+  
+  // Theme colors
+  const bgPrimary = isDark ? '#000000' : '#f5f5f7'
+  const bgCard = isDark ? '#0d0d0d' : '#ffffff'
+  const bgSecondary = isDark ? '#1a1a1a' : '#f2f2f7'
+  const borderColor = isDark ? '#1a1a1a' : '#e5e5ea'
+  const textPrimary = isDark ? '#fff' : '#000'
+  const textSecondary = isDark ? '#6b7280' : '#8e8e93'
   const [activeTab, setActiveTab] = useState('overview')
   const [profile, setProfile] = useState(null)
   const [stats, setStats] = useState(null)
@@ -53,7 +63,7 @@ const MobileIB = ({ onBack }) => {
 
   const handleShare = () => {
     if (navigator.share) {
-      navigator.share({ title: 'Join Bull4x', url: profile?.referralLink })
+      navigator.share({ title: 'Join Hcfinvest', url: profile?.referralLink })
     }
   }
 
@@ -78,8 +88,8 @@ const MobileIB = ({ onBack }) => {
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center" style={{ backgroundColor: '#000000' }}>
-        <Loader2 className="animate-spin" size={24} color="#6b7280" />
+      <div className="h-full flex items-center justify-center" style={{ backgroundColor: bgPrimary }}>
+        <Loader2 className="animate-spin" size={24} color={textSecondary} />
       </div>
     )
   }
@@ -92,36 +102,36 @@ const MobileIB = ({ onBack }) => {
   ]
 
   return (
-    <div className="h-full flex flex-col" style={{ backgroundColor: '#000000' }}>
+    <div className="h-full flex flex-col" style={{ backgroundColor: bgPrimary }}>
       {/* Header */}
       <div 
         className="flex items-center justify-between px-4 py-3"
-        style={{ backgroundColor: '#0d0d0d', borderBottom: '1px solid #1a1a1a' }}
+        style={{ backgroundColor: bgCard, borderBottom: `1px solid ${borderColor}` }}
       >
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-2 rounded-lg" style={{ backgroundColor: '#1a1a1a' }}>
-            <ArrowLeft size={18} color="#9ca3af" />
+          <button onClick={onBack} className="p-2 rounded-lg" style={{ backgroundColor: bgSecondary }}>
+            <ArrowLeft size={18} color={textSecondary} />
           </button>
           <div>
-            <h1 className="text-lg font-semibold" style={{ color: '#fff' }}>IB Dashboard</h1>
-            <p className="text-xs" style={{ color: '#6b7280' }}>{profile?.ibId}</p>
+            <h1 className="text-lg font-semibold" style={{ color: textPrimary }}>IB Dashboard</h1>
+            <p className="text-xs" style={{ color: textSecondary }}>{profile?.ibId}</p>
           </div>
         </div>
-        <button onClick={fetchData} className="p-2 rounded-lg" style={{ backgroundColor: '#1a1a1a' }}>
-          <RefreshCw size={16} color="#9ca3af" />
+        <button onClick={fetchData} className="p-2 rounded-lg" style={{ backgroundColor: bgSecondary }}>
+          <RefreshCw size={16} color={textSecondary} />
         </button>
       </div>
 
       {/* Tabs */}
-      <div className="flex" style={{ borderBottom: '1px solid #1a1a1a' }}>
+      <div className="flex" style={{ borderBottom: `1px solid ${borderColor}` }}>
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className="flex-1 py-2 text-xs"
             style={{ 
-              color: activeTab === tab.id ? '#22c55e' : '#6b7280',
-              borderBottom: activeTab === tab.id ? '2px solid #22c55e' : '2px solid transparent'
+              color: activeTab === tab.id ? '#3b82f6' : textSecondary,
+              borderBottom: activeTab === tab.id ? '2px solid #3b82f6' : '2px solid transparent'
             }}
           >
             {tab.label}
@@ -161,49 +171,49 @@ const MobileIB = ({ onBack }) => {
 
             {/* Stats */}
             <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="p-3 rounded-xl" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
+              <div className="p-3 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
                 <Users size={18} color="#3b82f6" className="mb-1" />
-                <p className="text-lg font-bold" style={{ color: '#fff' }}>{stats?.totalReferrals || 0}</p>
-                <p className="text-xs" style={{ color: '#6b7280' }}>Total Referrals</p>
+                <p className="text-lg font-bold" style={{ color: textPrimary }}>{stats?.totalReferrals || 0}</p>
+                <p className="text-xs" style={{ color: textSecondary }}>Total Referrals</p>
               </div>
-              <div className="p-3 rounded-xl" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
+              <div className="p-3 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
                 <UserPlus size={18} color="#22c55e" className="mb-1" />
                 <p className="text-lg font-bold" style={{ color: '#22c55e' }}>{stats?.activeReferrals || 0}</p>
-                <p className="text-xs" style={{ color: '#6b7280' }}>Active Traders</p>
+                <p className="text-xs" style={{ color: textSecondary }}>Active Traders</p>
               </div>
-              <div className="p-3 rounded-xl" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
+              <div className="p-3 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
                 <TrendingUp size={18} color="#a855f7" className="mb-1" />
-                <p className="text-lg font-bold" style={{ color: '#fff' }}>{stats?.totalTradingVolume?.toFixed(2) || 0} lots</p>
-                <p className="text-xs" style={{ color: '#6b7280' }}>Trading Volume</p>
+                <p className="text-lg font-bold" style={{ color: textPrimary }}>{stats?.totalTradingVolume?.toFixed(2) || 0} lots</p>
+                <p className="text-xs" style={{ color: textSecondary }}>Trading Volume</p>
               </div>
-              <div className="p-3 rounded-xl" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
+              <div className="p-3 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
                 <DollarSign size={18} color="#fbbf24" className="mb-1" />
-                <p className="text-lg font-bold" style={{ color: '#fff' }}>${stats?.totalDeposits?.toLocaleString() || 0}</p>
-                <p className="text-xs" style={{ color: '#6b7280' }}>Total Deposits</p>
+                <p className="text-lg font-bold" style={{ color: textPrimary }}>${stats?.totalDeposits?.toLocaleString() || 0}</p>
+                <p className="text-xs" style={{ color: textSecondary }}>Total Deposits</p>
               </div>
             </div>
 
             {/* IB Wallet */}
-            <div className="p-3 rounded-xl mb-4" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: '#fff' }}>
+            <div className="p-3 rounded-xl mb-4" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
+              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: textPrimary }}>
                 <Wallet size={16} /> IB Wallet
               </h3>
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
-                  <p className="text-xs" style={{ color: '#6b7280' }}>Available Balance</p>
+                  <p className="text-xs" style={{ color: textSecondary }}>Available Balance</p>
                   <p className="text-lg font-bold" style={{ color: '#22c55e' }}>${stats?.availableBalance?.toFixed(2) || '0.00'}</p>
                 </div>
                 <div>
-                  <p className="text-xs" style={{ color: '#6b7280' }}>Total Earned</p>
-                  <p className="text-lg font-bold" style={{ color: '#fff' }}>${stats?.totalCommissionEarned?.toFixed(2) || '0.00'}</p>
+                  <p className="text-xs" style={{ color: textSecondary }}>Total Earned</p>
+                  <p className="text-lg font-bold" style={{ color: textPrimary }}>${stats?.totalCommissionEarned?.toFixed(2) || '0.00'}</p>
                 </div>
                 <div>
-                  <p className="text-xs" style={{ color: '#6b7280' }}>Pending Withdrawals</p>
+                  <p className="text-xs" style={{ color: textSecondary }}>Pending Withdrawals</p>
                   <p className="text-lg font-bold" style={{ color: '#fbbf24' }}>${stats?.pendingWithdrawals?.toFixed(2) || '0.00'}</p>
                 </div>
                 <div>
-                  <p className="text-xs" style={{ color: '#6b7280' }}>Total Withdrawn</p>
-                  <p className="text-lg font-bold" style={{ color: '#fff' }}>${stats?.totalWithdrawn?.toFixed(2) || '0.00'}</p>
+                  <p className="text-xs" style={{ color: textSecondary }}>Total Withdrawn</p>
+                  <p className="text-lg font-bold" style={{ color: textPrimary }}>${stats?.totalWithdrawn?.toFixed(2) || '0.00'}</p>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -213,7 +223,7 @@ const MobileIB = ({ onBack }) => {
                   onChange={(e) => setWithdrawAmount(e.target.value)}
                   placeholder="Amount to withdraw"
                   className="flex-1 p-2 rounded-lg text-sm"
-                  style={{ backgroundColor: '#1a1a1a', color: '#fff', border: '1px solid #262626' }}
+                  style={{ backgroundColor: bgSecondary, color: textPrimary, border: `1px solid ${borderColor}` }}
                 />
                 <button
                   onClick={handleWithdraw}
@@ -228,15 +238,15 @@ const MobileIB = ({ onBack }) => {
             </div>
 
             {/* Commission Model */}
-            <div className="p-3 rounded-xl" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
-              <h3 className="text-sm font-semibold mb-3" style={{ color: '#fff' }}>Your Commission Model</h3>
+            <div className="p-3 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
+              <h3 className="text-sm font-semibold mb-3" style={{ color: textPrimary }}>Your Commission Model</h3>
               <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-xs" style={{ color: '#6b7280' }}>Type:</span>
-                  <span className="text-xs font-medium capitalize" style={{ color: '#fff' }}>{profile?.commissionType?.replace('_', ' ')}</span>
+                  <span className="text-xs" style={{ color: textSecondary }}>Type:</span>
+                  <span className="text-xs font-medium capitalize" style={{ color: textPrimary }}>{profile?.commissionType?.replace('_', ' ')}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-xs" style={{ color: '#6b7280' }}>Rate:</span>
+                  <span className="text-xs" style={{ color: textSecondary }}>Rate:</span>
                   <span className="text-xs font-medium" style={{ color: '#22c55e' }}>
                     {profile?.commissionType === 'per_lot' ? `$${profile?.commissionValue} per lot` :
                      profile?.commissionType === 'percentage_profit' ? `${profile?.commissionValue}% of profit` :
@@ -264,32 +274,32 @@ const MobileIB = ({ onBack }) => {
           <div className="space-y-2">
             {referrals.length === 0 ? (
               <div className="text-center py-8">
-                <Users size={32} color="#6b7280" className="mx-auto mb-2" />
-                <p className="text-sm" style={{ color: '#6b7280' }}>No referrals yet</p>
-                <p className="text-xs" style={{ color: '#6b7280' }}>Share your link to start earning!</p>
+                <Users size={32} color={textSecondary} className="mx-auto mb-2" />
+                <p className="text-sm" style={{ color: textSecondary }}>No referrals yet</p>
+                <p className="text-xs" style={{ color: textSecondary }}>Share your link to start earning!</p>
               </div>
             ) : referrals.map(ref => (
-              <div key={ref._id} className="p-3 rounded-xl" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
+              <div key={ref._id} className="p-3 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
                 <div className="flex justify-between items-start mb-2">
                   <div>
-                    <p className="text-sm font-medium" style={{ color: '#fff' }}>{ref.referredUserId?.firstName} {ref.referredUserId?.lastName}</p>
-                    <p className="text-xs" style={{ color: '#6b7280' }}>{ref.referredUserId?.email}</p>
+                    <p className="text-sm font-medium" style={{ color: textPrimary }}>{ref.referredUserId?.firstName} {ref.referredUserId?.lastName}</p>
+                    <p className="text-xs" style={{ color: textSecondary }}>{ref.referredUserId?.email}</p>
                   </div>
-                  <span className="text-xs px-2 py-1 rounded" style={{ backgroundColor: ref.status === 'active' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(107, 114, 128, 0.2)', color: ref.status === 'active' ? '#22c55e' : '#6b7280' }}>
+                  <span className="text-xs px-2 py-1 rounded" style={{ backgroundColor: ref.status === 'active' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(107, 114, 128, 0.2)', color: ref.status === 'active' ? '#22c55e' : textSecondary }}>
                     {ref.status}
                   </span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-xs">
                   <div>
-                    <p style={{ color: '#6b7280' }}>Registered</p>
-                    <p style={{ color: '#fff' }}>{new Date(ref.registeredAt).toLocaleDateString()}</p>
+                    <p style={{ color: textSecondary }}>Registered</p>
+                    <p style={{ color: textPrimary }}>{new Date(ref.registeredAt).toLocaleDateString()}</p>
                   </div>
                   <div>
-                    <p style={{ color: '#6b7280' }}>Volume</p>
-                    <p style={{ color: '#fff' }}>{ref.stats?.totalTradingVolume?.toFixed(2) || 0} lots</p>
+                    <p style={{ color: textSecondary }}>Volume</p>
+                    <p style={{ color: textPrimary }}>{ref.stats?.totalTradingVolume?.toFixed(2) || 0} lots</p>
                   </div>
                   <div>
-                    <p style={{ color: '#6b7280' }}>Commission</p>
+                    <p style={{ color: textSecondary }}>Commission</p>
                     <p style={{ color: '#22c55e' }}>${ref.stats?.commissionGenerated?.toFixed(2) || 0}</p>
                   </div>
                 </div>
@@ -302,25 +312,25 @@ const MobileIB = ({ onBack }) => {
           <div className="space-y-2">
             {commissions.length === 0 ? (
               <div className="text-center py-8">
-                <DollarSign size={32} color="#6b7280" className="mx-auto mb-2" />
-                <p className="text-sm" style={{ color: '#6b7280' }}>No commission history yet</p>
+                <DollarSign size={32} color={textSecondary} className="mx-auto mb-2" />
+                <p className="text-sm" style={{ color: textSecondary }}>No commission history yet</p>
               </div>
             ) : commissions.map(com => (
-              <div key={com._id} className="p-3 rounded-xl" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
+              <div key={com._id} className="p-3 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       <p className="text-sm font-bold" style={{ color: '#22c55e' }}>+${com.commissionAmount?.toFixed(2)}</p>
-                      <span className="px-2 py-0.5 rounded text-xs capitalize" style={{ backgroundColor: '#1a1a1a', color: '#9ca3af' }}>
+                      <span className="px-2 py-0.5 rounded text-xs capitalize" style={{ backgroundColor: isDark ? '#1a1a1a' : '#e5e5ea', color: isDark ? '#9ca3af' : '#6b7280' }}>
                         {com.sourceType?.replace('_', ' ')}
                       </span>
                     </div>
-                    <p className="text-xs" style={{ color: '#fff' }}>{com.sourceUserId?.firstName} {com.sourceUserId?.lastName}</p>
-                    <p className="text-xs" style={{ color: '#6b7280' }}>
+                    <p className="text-xs" style={{ color: textPrimary }}>{com.sourceUserId?.firstName} {com.sourceUserId?.lastName}</p>
+                    <p className="text-xs" style={{ color: textSecondary }}>
                       {com.sourceType === 'trade' ? `${com.symbol} • ${com.lots} lots` : com.sourceType === 'first_deposit' ? `$${com.depositAmount}` : '-'}
                     </p>
                   </div>
-                  <p className="text-xs" style={{ color: '#6b7280' }}>{new Date(com.createdAt).toLocaleDateString()}</p>
+                  <p className="text-xs" style={{ color: textSecondary }}>{new Date(com.createdAt).toLocaleDateString()}</p>
                 </div>
               </div>
             ))}
@@ -331,15 +341,15 @@ const MobileIB = ({ onBack }) => {
           <div className="space-y-2">
             {withdrawals.length === 0 ? (
               <div className="text-center py-8">
-                <ArrowDownToLine size={32} color="#6b7280" className="mx-auto mb-2" />
-                <p className="text-sm" style={{ color: '#6b7280' }}>No withdrawal history yet</p>
+                <ArrowDownToLine size={32} color={textSecondary} className="mx-auto mb-2" />
+                <p className="text-sm" style={{ color: textSecondary }}>No withdrawal history yet</p>
               </div>
             ) : withdrawals.map(w => (
-              <div key={w._id} className="p-3 rounded-xl" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
+              <div key={w._id} className="p-3 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
                 <div className="flex justify-between items-center">
                   <div>
-                    <p className="text-sm font-bold" style={{ color: '#fff' }}>${w.amount?.toFixed(2)}</p>
-                    <p className="text-xs capitalize" style={{ color: '#6b7280' }}>{w.method}</p>
+                    <p className="text-sm font-bold" style={{ color: textPrimary }}>${w.amount?.toFixed(2)}</p>
+                    <p className="text-xs capitalize" style={{ color: textSecondary }}>{w.method}</p>
                   </div>
                   <div className="text-right">
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
@@ -350,7 +360,7 @@ const MobileIB = ({ onBack }) => {
                     }`}>
                       {w.status}
                     </span>
-                    <p className="text-xs mt-1" style={{ color: '#6b7280' }}>{new Date(w.createdAt).toLocaleDateString()}</p>
+                    <p className="text-xs mt-1" style={{ color: textSecondary }}>{new Date(w.createdAt).toLocaleDateString()}</p>
                   </div>
                 </div>
               </div>

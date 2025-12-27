@@ -23,27 +23,45 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
   const [mockPrices, setMockPrices] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [tradeType, setTradeType] = useState('buy') // 'buy' or 'sell' for market orders
+  const [selectedLeverage, setSelectedLeverage] = useState(100) // Default to 1:100
+  const [maxLeverage, setMaxLeverage] = useState(100)
 
   const getAuthHeader = () => ({
     headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
   })
 
-  // Fetch user balance for margin
+  // Fetch user balance and leverage from trading account
   useEffect(() => {
-    const fetchBalance = async () => {
+    const fetchAccountData = async () => {
       const token = localStorage.getItem('token')
       if (!token) return
       try {
-        const res = await axios.get('/api/auth/me', getAuthHeader())
-        if (res.data.success) {
-          setMarginFree(res.data.data.balance || 0)
+        // Get trading account data for leverage
+        const savedAccount = localStorage.getItem('activeTradingAccount')
+        if (savedAccount) {
+          const accountData = JSON.parse(savedAccount)
+          const accountRes = await axios.get(`/api/trading-accounts/${accountData._id}`, getAuthHeader())
+          if (accountRes.data.success && accountRes.data.data) {
+            const account = accountRes.data.data
+            setMarginFree(account.balance || 0)
+            setMaxLeverage(account.leverage || 100)
+            // Set selected leverage to account max by default
+            if (selectedLeverage > account.leverage) {
+              setSelectedLeverage(account.leverage)
+            }
+          }
+        } else {
+          const res = await axios.get('/api/auth/me', getAuthHeader())
+          if (res.data.success) {
+            setMarginFree(res.data.data.balance || 0)
+          }
         }
       } catch (err) {
-        console.error('Failed to fetch balance:', err)
+        console.error('Failed to fetch account data:', err)
       }
     }
-    fetchBalance()
-    const interval = setInterval(fetchBalance, 5000)
+    fetchAccountData()
+    const interval = setInterval(fetchAccountData, 5000)
     return () => clearInterval(interval)
   }, [])
 
@@ -113,13 +131,15 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
     try {
       setSubmitting(true)
       
+      const activeAccount = JSON.parse(localStorage.getItem('activeTradingAccount') || '{}')
       const orderData = {
         symbol,
         type: tradeType, // 'buy' or 'sell'
         amount: volume,
-        leverage: 100,
+        leverage: selectedLeverage,
         stopLoss: stopLoss ? parseFloat(stopLoss) : null,
-        takeProfit: takeProfit ? parseFloat(takeProfit) : null
+        takeProfit: takeProfit ? parseFloat(takeProfit) : null,
+        tradingAccountId: activeAccount._id
       }
 
       if (orderType === 'market') {
@@ -230,12 +250,12 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
                 onClick={() => setTradeType('buy')}
                 className="rounded-lg p-3 text-center transition-colors"
                 style={{ 
-                  backgroundColor: tradeType === 'buy' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(34, 197, 94, 0.1)', 
-                  border: tradeType === 'buy' ? '2px solid var(--accent-green)' : '1px solid var(--accent-green)'
+                  backgroundColor: tradeType === 'buy' ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.1)', 
+                  border: tradeType === 'buy' ? '2px solid #3b82f6' : '1px solid #3b82f6'
                 }}
               >
                 <div className="text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>Buy</div>
-                <div className="font-semibold" style={{ color: 'var(--accent-green)' }}>
+                <div className="font-semibold" style={{ color: '#3b82f6' }}>
                   {buyPrice ? buyPrice.toFixed(symbol.includes('JPY') ? 3 : 5) : '-.--'}
                 </div>
               </button>
@@ -288,10 +308,10 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
                     className="py-2 px-3 rounded-lg text-xs font-medium transition-colors"
                     style={{ 
                       backgroundColor: pendingOrderType === type 
-                        ? (type.includes('BUY') ? 'var(--accent-green)' : 'var(--bg-hover)')
+                        ? (type.includes('BUY') ? '#3b82f6' : 'var(--bg-hover)')
                         : 'var(--bg-card)',
                       color: pendingOrderType === type 
-                        ? (type.includes('BUY') ? '#000' : 'var(--text-primary)')
+                        ? (type.includes('BUY') ? '#fff' : 'var(--text-primary)')
                         : 'var(--text-secondary)',
                       border: pendingOrderType === type && !type.includes('BUY') ? '1px solid var(--border-color)' : 'none'
                     }}
@@ -349,6 +369,31 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
             </div>
           </>
         )}
+        
+        {/* Leverage Selector */}
+        <div className="mb-4">
+          <label className="block text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+            Leverage (Max: {maxLeverage}x)
+          </label>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedLeverage}
+              onChange={(e) => setSelectedLeverage(parseInt(e.target.value))}
+              className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+            >
+              {[30, 50, 100, 200, 400, 500, 600, 800, 1000, 1500, 2000].filter(l => l <= maxLeverage).map(lev => (
+                <option key={lev} value={lev}>1:{lev}</option>
+              ))}
+            </select>
+            <div className="text-xs px-2 py-1 rounded" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6' }}>
+              ${(marginFree * selectedLeverage).toLocaleString()}
+            </div>
+          </div>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+            Trading power: ${marginFree.toFixed(2)} × {selectedLeverage} = ${(marginFree * selectedLeverage).toLocaleString()}
+          </p>
+        </div>
         
         {/* Take Profit */}
         <div className="mb-3">
@@ -418,8 +463,8 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
               disabled={submitting || marginRequired > marginFree || (tradeType === 'buy' ? !buyPrice : !sellPrice)}
               className="w-full font-semibold py-3 rounded-lg transition-colors hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
               style={{ 
-                backgroundColor: tradeType === 'buy' ? 'var(--accent-green)' : 'var(--accent-red)', 
-                color: tradeType === 'buy' ? '#000' : '#fff' 
+                backgroundColor: tradeType === 'buy' ? '#3b82f6' : 'var(--accent-red)', 
+                color: '#fff' 
               }}
             >
               {submitting && <Loader2 size={16} className="animate-spin" />}
@@ -438,8 +483,8 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
               disabled={submitting || !entryPrice || marginRequired > marginFree}
               className="w-full font-semibold py-3 rounded-lg transition-colors hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
               style={{ 
-                backgroundColor: pendingOrderType.includes('BUY') ? 'var(--accent-green)' : 'var(--accent-red)', 
-                color: pendingOrderType.includes('BUY') ? '#000' : '#fff' 
+                backgroundColor: pendingOrderType.includes('BUY') ? '#3b82f6' : 'var(--accent-red)', 
+                color: '#fff' 
               }}
             >
               {submitting && <Loader2 size={16} className="animate-spin" />}

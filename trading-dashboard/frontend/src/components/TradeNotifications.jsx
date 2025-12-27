@@ -89,33 +89,27 @@ const TradeNotifications = () => {
       }
     })
 
-    // Margin call warning
-    socket.on('marginCall', (data) => {
-      addNotification({
-        type: 'warning',
-        icon: <AlertTriangle size={20} />,
-        title: '⚠️ Margin Call',
-        message: data.message,
-        persist: true
-      })
-
-      setDialogData({
-        type: 'margin_call',
-        equity: data.equity,
-        marginLevel: data.marginLevel,
-        message: data.message
-      })
-      setShowDialog(true)
+    // Margin call warning - COMPLETELY DISABLED
+    // Ignore all marginCall events - do nothing
+    socket.on('marginCall', () => {
+      // Intentionally empty - ignore margin calls completely
     })
 
-    // Stop out - all trades closed
+    // Stop out - all trades closed (auto square off)
+    // Only show if there are actually closed trades with losses
     socket.on('stopOut', (data) => {
+      // Ignore if no trades were actually closed or PnL is 0
+      if (!data.closedTrades || data.closedTrades.length === 0) {
+        console.log('[TradeNotifications] Ignoring empty stop-out event')
+        return
+      }
+      
       addNotification({
         type: 'error',
         icon: <Shield size={20} />,
         title: '🛑 Stop Out',
         message: data.message,
-        persist: true
+        persist: false // Don't persist, auto-dismiss after 5 seconds
       })
 
       setDialogData({
@@ -146,13 +140,23 @@ const TradeNotifications = () => {
 
   const addNotification = useCallback((notification) => {
     const id = Date.now()
-    setNotifications(prev => [...prev, { ...notification, id }])
+    const notificationKey = `${notification.title}-${notification.trade?._id || ''}`
+    
+    // Prevent duplicate notifications (same title + trade within 3 seconds)
+    setNotifications(prev => {
+      const recentDuplicate = prev.find(n => 
+        `${n.title}-${n.trade?._id || ''}` === notificationKey && 
+        (id - n.id) < 3000
+      )
+      if (recentDuplicate) return prev // Skip duplicate
+      return [...prev, { ...notification, id }]
+    })
 
-    // Auto remove after 5 seconds (unless persist)
+    // Auto remove after 4 seconds (faster cleanup)
     if (!notification.persist) {
       setTimeout(() => {
         setNotifications(prev => prev.filter(n => n.id !== id))
-      }, 5000)
+      }, 4000)
     }
   }, [])
 
@@ -163,7 +167,7 @@ const TradeNotifications = () => {
   const getTypeStyles = (type) => {
     switch (type) {
       case 'success':
-        return { bg: 'rgba(34, 197, 94, 0.95)', border: '#22c55e', iconColor: '#fff' }
+        return { bg: 'rgba(59, 130, 246, 0.95)', border: '#3b82f6', iconColor: '#fff' }
       case 'error':
         return { bg: 'rgba(239, 68, 68, 0.95)', border: '#ef4444', iconColor: '#fff' }
       case 'warning':
@@ -179,7 +183,7 @@ const TradeNotifications = () => {
       case 'stop_loss':
         return <Shield size={48} style={{ color: '#ef4444' }} />
       case 'take_profit':
-        return <Target size={48} style={{ color: '#22c55e' }} />
+        return <Target size={48} style={{ color: '#3b82f6' }} />
       case 'stop_out':
         return <AlertTriangle size={48} style={{ color: '#ef4444' }} />
       case 'margin_call':
@@ -191,152 +195,162 @@ const TradeNotifications = () => {
 
   return (
     <>
-      {/* Notifications Stack */}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
-        {notifications.map((notification) => {
+      {/* iOS-style Notifications - Top center banner */}
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2" style={{ width: 'min(90vw, 380px)' }}>
+        {notifications.slice(-3).map((notification) => {
           const styles = getTypeStyles(notification.type)
           return (
             <div
               key={notification.id}
-              className="rounded-xl p-4 shadow-2xl animate-slide-in flex items-start gap-3"
+              className="ios-notification rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3"
               style={{ 
-                backgroundColor: styles.bg, 
-                borderLeft: `4px solid ${styles.border}`,
-                backdropFilter: 'blur(10px)'
+                background: 'rgba(30, 30, 30, 0.85)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+                border: '1px solid rgba(255,255,255,0.1)'
               }}
             >
-              <div style={{ color: styles.iconColor }}>
-                {notification.icon}
+              {/* App Icon */}
+              <div 
+                className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{ backgroundColor: styles.border }}
+              >
+                {React.cloneElement(notification.icon, { size: 20, color: '#fff' })}
               </div>
-              <div className="flex-1">
-                <p className="font-semibold text-white text-sm">{notification.title}</p>
-                <p className="text-white/90 text-xs mt-1">{notification.message}</p>
+              
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold text-white text-sm">{notification.title}</p>
+                  <span className="text-xs text-gray-500">now</span>
+                </div>
+                <p className="text-gray-400 text-xs truncate mt-0.5">
+                  {notification.message || (notification.trade?.symbol ? `${notification.trade.symbol}` : '')}
+                </p>
                 {notification.pnl !== undefined && (
-                  <p className={`text-sm font-bold mt-1 ${notification.pnl >= 0 ? 'text-blue-200' : 'text-red-200'}`}>
-                    P/L: {notification.pnl >= 0 ? '+' : ''}{notification.pnl.toFixed(2)} USD
-                  </p>
+                  <span className={`text-sm font-bold ${notification.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {notification.pnl >= 0 ? '+' : ''}${notification.pnl.toFixed(2)}
+                  </span>
                 )}
               </div>
+              
               <button 
                 onClick={() => removeNotification(notification.id)}
-                className="text-white/70 hover:text-white"
+                className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}
               >
-                <X size={16} />
+                <X size={12} color="#999" />
               </button>
             </div>
           )
         })}
       </div>
 
-      {/* Dialog Modal for Important Events */}
+      {/* iOS-style Dialog Modal */}
       {showDialog && dialogData && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 ios-modal-backdrop">
           <div 
-            className="w-full max-w-md rounded-2xl p-6 animate-scale-in"
-            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+            className="w-full max-w-sm rounded-3xl overflow-hidden ios-modal"
+            style={{ 
+              background: 'rgba(30, 30, 30, 0.95)',
+              backdropFilter: 'blur(40px)',
+              WebkitBackdropFilter: 'blur(40px)',
+              border: '1px solid rgba(255,255,255,0.1)'
+            }}
           >
-            <div className="text-center mb-6">
-              {getDialogIcon(dialogData.type)}
-              <h2 className="text-xl font-bold mt-4" style={{ color: 'var(--text-primary)' }}>
-                {dialogData.type === 'stop_loss' && '🛡️ Stop Loss Triggered'}
-                {dialogData.type === 'take_profit' && '🎯 Take Profit Hit'}
-                {dialogData.type === 'stop_out' && '🛑 Stop Out - All Positions Closed'}
-                {dialogData.type === 'margin_call' && '⚠️ Margin Call Warning'}
+            {/* Header */}
+            <div className="pt-8 pb-4 px-6 text-center">
+              <div className="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-4"
+                style={{ 
+                  backgroundColor: dialogData.type === 'take_profit' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(239, 68, 68, 0.2)'
+                }}
+              >
+                {getDialogIcon(dialogData.type)}
+              </div>
+              <h2 className="text-xl font-bold text-white">
+                {dialogData.type === 'stop_loss' && 'Stop Loss Triggered'}
+                {dialogData.type === 'take_profit' && 'Take Profit Hit'}
+                {dialogData.type === 'stop_out' && 'Stop Out'}
               </h2>
+              <p className="text-gray-400 text-sm mt-1">Your trade has been closed</p>
             </div>
 
-            <div className="space-y-4 mb-6">
+            {/* Content */}
+            <div className="px-6 pb-4">
               {dialogData.trade && (
-                <div className="p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
-                  <div className="flex justify-between mb-2">
-                    <span style={{ color: 'var(--text-muted)' }}>Symbol</span>
-                    <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{dialogData.trade.symbol}</span>
+                <div className="space-y-2 mb-4">
+                  <div className="flex justify-between py-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                    <span className="text-gray-500">Symbol</span>
+                    <span className="text-white font-medium">{dialogData.trade.symbol}</span>
                   </div>
-                  <div className="flex justify-between mb-2">
-                    <span style={{ color: 'var(--text-muted)' }}>Type</span>
-                    <span className={`font-semibold ${dialogData.trade.type === 'buy' ? 'text-green-500' : 'text-red-500'}`}>
-                      {dialogData.trade.type.toUpperCase()}
+                  <div className="flex justify-between py-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                    <span className="text-gray-500">Type</span>
+                    <span className={dialogData.trade.type === 'buy' ? 'text-blue-400' : 'text-red-400'}>
+                      {dialogData.trade.type?.toUpperCase()}
                     </span>
                   </div>
-                  <div className="flex justify-between mb-2">
-                    <span style={{ color: 'var(--text-muted)' }}>Entry Price</span>
-                    <span style={{ color: 'var(--text-primary)' }}>{dialogData.trade.price}</span>
+                  <div className="flex justify-between py-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                    <span className="text-gray-500">Entry</span>
+                    <span className="text-white">{dialogData.trade.price?.toFixed?.(5) || dialogData.trade.price}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span style={{ color: 'var(--text-muted)' }}>Close Price</span>
-                    <span style={{ color: 'var(--text-primary)' }}>{dialogData.trade.closePrice}</span>
+                  <div className="flex justify-between py-2">
+                    <span className="text-gray-500">Exit</span>
+                    <span className="text-white">{dialogData.trade.closePrice?.toFixed?.(5) || dialogData.trade.closePrice}</span>
                   </div>
                 </div>
               )}
 
               {dialogData.pnl !== undefined && (
                 <div 
-                  className="p-4 rounded-xl text-center"
-                  style={{ 
-                    background: dialogData.pnl >= 0 
-                      ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.2) 0%, rgba(16, 185, 129, 0.2) 100%)'
-                      : 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.2) 100%)',
-                    border: `1px solid ${dialogData.pnl >= 0 ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)'}`
-                  }}
+                  className="py-4 rounded-2xl text-center mb-4"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
                 >
-                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Profit / Loss</p>
-                  <p className={`text-3xl font-bold ${dialogData.pnl >= 0 ? 'text-blue-500' : 'text-red-500'}`}>
-                    {dialogData.pnl >= 0 ? '+' : ''}{dialogData.pnl.toFixed(2)} USD
+                  <p className="text-gray-500 text-xs uppercase tracking-wide mb-1">Profit / Loss</p>
+                  <p className={`text-3xl font-bold ${dialogData.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {dialogData.pnl >= 0 ? '+' : ''}{dialogData.pnl.toFixed(2)}
+                    <span className="text-lg ml-1">USD</span>
                   </p>
                 </div>
               )}
 
               {dialogData.type === 'stop_out' && (
-                <div className="p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
-                  <p className="text-sm mb-2" style={{ color: 'var(--text-muted)' }}>
-                    {dialogData.closedTrades?.length || 0} trades were automatically closed
+                <div className="py-3 px-4 rounded-2xl mb-4" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)' }}>
+                  <p className="text-gray-400 text-sm text-center">
+                    {dialogData.closedTrades?.length || 0} trades closed automatically
                   </p>
-                  <div className="flex justify-between">
-                    <span style={{ color: 'var(--text-muted)' }}>Total P/L</span>
-                    <span className={`font-bold ${dialogData.totalPnL >= 0 ? 'text-blue-500' : 'text-red-500'}`}>
-                      {dialogData.totalPnL >= 0 ? '+' : ''}{dialogData.totalPnL?.toFixed(2)} USD
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {dialogData.type === 'margin_call' && (
-                <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30">
-                  <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
-                    Your margin level is critically low at <strong>{dialogData.marginLevel}%</strong>
-                  </p>
-                  <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-                    Deposit funds or close positions to avoid automatic liquidation.
+                  <p className={`text-center font-bold text-lg mt-1 ${dialogData.totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {dialogData.totalPnL >= 0 ? '+' : ''}{dialogData.totalPnL?.toFixed(2)} USD
                   </p>
                 </div>
               )}
             </div>
 
-            <button
-              onClick={() => setShowDialog(false)}
-              className="w-full py-3 rounded-xl font-semibold text-white"
-              style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)' }}
-            >
-              Acknowledge
-            </button>
+            {/* iOS-style Button */}
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <button
+                onClick={() => setShowDialog(false)}
+                className="w-full py-4 font-semibold text-blue-400 text-lg active:bg-white/5 transition-colors"
+              >
+                OK
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       <style>{`
-        @keyframes slide-in {
+        @keyframes ios-slide-down {
           from {
-            transform: translateX(100%);
+            transform: translateY(-100%);
             opacity: 0;
           }
           to {
-            transform: translateX(0);
+            transform: translateY(0);
             opacity: 1;
           }
         }
-        @keyframes scale-in {
+        @keyframes ios-scale-in {
           from {
-            transform: scale(0.9);
+            transform: scale(1.1);
             opacity: 0;
           }
           to {
@@ -344,11 +358,27 @@ const TradeNotifications = () => {
             opacity: 1;
           }
         }
-        .animate-slide-in {
-          animation: slide-in 0.3s ease-out;
+        @keyframes ios-backdrop {
+          from {
+            backdrop-filter: blur(0px);
+            background: transparent;
+          }
+          to {
+            backdrop-filter: blur(10px);
+            background: rgba(0,0,0,0.5);
+          }
         }
-        .animate-scale-in {
-          animation: scale-in 0.2s ease-out;
+        .ios-notification {
+          animation: ios-slide-down 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+        }
+        .ios-modal {
+          animation: ios-scale-in 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+        }
+        .ios-modal-backdrop {
+          animation: ios-backdrop 0.3s ease-out forwards;
+          background: rgba(0,0,0,0.5);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
         }
       `}</style>
     </>

@@ -63,9 +63,33 @@ const InstrumentsPanel = ({ onClose, onSelectSymbol, selectedSymbol }) => {
   const [searchTerm, setSearchTerm] = useState('')
   const [activeTab, setActiveTab] = useState('all')
   const [apiPrices, setApiPrices] = useState({})
+  const [adminSpreads, setAdminSpreads] = useState({})
+  const [contextMenu, setContextMenu] = useState({ show: false, x: 0, y: 0, symbol: null })
   const [favorites, setFavorites] = useState(
     baseInstruments.filter(i => i.favorite).map(i => i.symbol)
   )
+  
+  // Close context menu on click outside
+  useEffect(() => {
+    const handleClick = () => setContextMenu({ show: false, x: 0, y: 0, symbol: null })
+    document.addEventListener('click', handleClick)
+    return () => document.removeEventListener('click', handleClick)
+  }, [])
+
+  // Fetch admin-configured spreads
+  useEffect(() => {
+    const fetchSpreads = async () => {
+      try {
+        const res = await axios.get('/api/market/spreads')
+        if (res.data.success) {
+          setAdminSpreads(res.data.data)
+        }
+      } catch (err) {
+        console.log('Using default spreads')
+      }
+    }
+    fetchSpreads()
+  }, [])
 
   // Fetch real-time prices from backend (AllTick API)
   useEffect(() => {
@@ -140,10 +164,9 @@ const InstrumentsPanel = ({ onClose, onSelectSymbol, selectedSymbol }) => {
 
   return (
     <div 
-      className="w-80 flex flex-col transition-colors"
+      className="h-full flex flex-col transition-colors overflow-hidden"
       style={{ 
-        backgroundColor: 'var(--bg-secondary)', 
-        borderRight: '1px solid var(--border-color)' 
+        backgroundColor: 'var(--bg-secondary)'
       }}
     >
       {/* Header */}
@@ -204,38 +227,64 @@ const InstrumentsPanel = ({ onClose, onSelectSymbol, selectedSymbol }) => {
           return (
             <div
               key={inst.symbol}
-              onClick={() => onSelectSymbol(inst.symbol)}
-              className="flex items-center justify-between px-3 py-2 cursor-pointer transition-colors"
+              onClick={() => onSelectSymbol(inst.symbol, true)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setContextMenu({ show: true, x: e.clientX, y: e.clientY, symbol: inst.symbol })
+              }}
+              className="grid grid-cols-[auto_1fr_65px_40px_65px] items-center gap-1 px-3 py-2 cursor-pointer transition-colors"
               style={{ 
                 backgroundColor: selectedSymbol === inst.symbol ? 'var(--bg-hover)' : 'transparent'
               }}
             >
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    toggleFavorite(inst.symbol)
-                  }}
-                  className="transition-colors"
-                  style={{ color: favorites.includes(inst.symbol) ? '#facc15' : 'var(--text-muted)' }}
-                >
-                  <Star size={14} fill={favorites.includes(inst.symbol) ? 'currentColor' : 'none'} />
-                </button>
-                <div>
-                  <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{inst.symbol}</div>
-                  <div className="text-xs" style={{ color: liveData.change >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-                    {liveData.change >= 0 ? '+' : ''}{liveData.change.toFixed(2)}%
-                  </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleFavorite(inst.symbol)
+                }}
+                className="transition-colors"
+                style={{ color: favorites.includes(inst.symbol) ? '#facc15' : 'var(--text-muted)' }}
+              >
+                <Star size={14} fill={favorites.includes(inst.symbol) ? 'currentColor' : 'none'} />
+              </button>
+              <div>
+                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{inst.symbol}</div>
+                <div className="text-xs" style={{ color: liveData.change >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                  {liveData.change >= 0 ? '+' : ''}{liveData.change.toFixed(2)}%
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-xs font-mono" style={{ color: 'var(--accent-red)' }}>
+                <div className="text-sm font-mono" style={{ color: 'var(--accent-red)' }}>
                   {liveData.bid ? liveData.bid.toFixed(inst.decimals) : '-.--'}
                 </div>
                 <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Bid</div>
               </div>
+              {/* Spread Indicator - Admin + Market Combined */}
+              <div className="text-center px-1">
+                <div 
+                  className="text-xs font-mono px-1.5 py-0.5 rounded font-semibold transition-all"
+                  style={{ 
+                    backgroundColor: 'var(--bg-hover)', 
+                    color: '#f59e0b',
+                    fontSize: '10px'
+                  }}
+                >
+                  {(() => {
+                    const adminSpread = adminSpreads[inst.symbol] || 0
+                    // Calculate market spread in pips
+                    const pipMultiplier = inst.symbol.includes('JPY') ? 100 : 
+                                         inst.symbol.includes('XAU') ? 10 :
+                                         inst.symbol.includes('BTC') || inst.symbol.includes('ETH') ? 1 : 10000
+                    const marketSpread = liveData.bid && liveData.ask ? 
+                      (liveData.ask - liveData.bid) * pipMultiplier : 0
+                    const totalSpread = adminSpread + marketSpread
+                    return totalSpread.toFixed(1)
+                  })()}
+                </div>
+                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)', fontSize: '9px' }}>Sprd</div>
+              </div>
               <div className="text-right">
-                <div className="text-xs font-mono" style={{ color: 'var(--accent-blue)' }}>
+                <div className="text-sm font-mono" style={{ color: 'var(--accent-blue)' }}>
                   {liveData.ask ? liveData.ask.toFixed(inst.decimals) : '-.--'}
                 </div>
                 <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Ask</div>
@@ -265,6 +314,56 @@ const InstrumentsPanel = ({ onClose, onSelectSymbol, selectedSymbol }) => {
           )}
         </div>
       </div>
+      
+      {/* Right-Click Context Menu */}
+      {contextMenu.show && (
+        <div
+          className="fixed z-50 py-1 rounded-lg shadow-xl"
+          style={{
+            left: contextMenu.x,
+            top: contextMenu.y,
+            backgroundColor: 'var(--bg-secondary)',
+            border: '1px solid var(--border-color)',
+            minWidth: '160px'
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 text-xs font-semibold" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-color)' }}>
+            {contextMenu.symbol}
+          </div>
+          <button
+            onClick={() => {
+              onSelectSymbol(contextMenu.symbol, false)
+              setContextMenu({ show: false, x: 0, y: 0, symbol: null })
+            }}
+            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-700 transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            📈 Open Chart
+          </button>
+          <button
+            onClick={() => {
+              onSelectSymbol(contextMenu.symbol, true)
+              setContextMenu({ show: false, x: 0, y: 0, symbol: null })
+            }}
+            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-700 transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            📊 Open in New Tab
+          </button>
+          <div style={{ borderTop: '1px solid var(--border-color)', margin: '4px 0' }}></div>
+          <button
+            onClick={() => {
+              toggleFavorite(contextMenu.symbol)
+              setContextMenu({ show: false, x: 0, y: 0, symbol: null })
+            }}
+            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-700 transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {favorites.includes(contextMenu.symbol) ? '★ Remove from Favorites' : '☆ Add to Favorites'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

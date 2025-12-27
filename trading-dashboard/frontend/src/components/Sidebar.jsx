@@ -1,9 +1,7 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { 
   Home, 
-  LayoutGrid, 
-  BarChart3, 
   Users, 
   ClipboardList, 
   Headphones,
@@ -11,14 +9,18 @@ import {
   Sun,
   Moon,
   UserPlus,
-  UserCircle
+  UserCircle,
+  Layers,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react'
 import { useTheme } from '../context/ThemeContext'
 
-const Sidebar = ({ activeView, setActiveView, onToggleInstruments, showInstruments }) => {
+const Sidebar = ({ activeView, setActiveView }) => {
   const { isDark, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
+  const [isCollapsed, setIsCollapsed] = useState(true)
 
   const handleNavigation = (view, path) => {
     setActiveView(view)
@@ -27,8 +29,7 @@ const Sidebar = ({ activeView, setActiveView, onToggleInstruments, showInstrumen
 
   const menuItems = [
     { icon: Home, label: 'Dashboard', id: 'home', path: '/home', onClick: () => handleNavigation('home', '/home') },
-    { icon: BarChart3, label: 'Chart', id: 'chart', path: '/trade', onClick: () => handleNavigation('chart', '/trade') },
-    { icon: LayoutGrid, label: 'Instruments', id: 'instruments', path: null, onClick: onToggleInstruments },
+    { icon: Layers, label: 'Accounts', id: 'accounts', path: '/accounts', onClick: () => handleNavigation('accounts', '/accounts') },
     { icon: ClipboardList, label: 'Orders', id: 'orders', path: '/orders', onClick: () => handleNavigation('orders', '/orders') },
     { icon: Wallet, label: 'Wallet', id: 'wallet', path: '/wallet', onClick: () => handleNavigation('wallet', '/wallet') },
     { icon: Users, label: 'Copy Trading', id: 'copy', path: '/copytrade', onClick: () => handleNavigation('copy', '/copytrade') },
@@ -38,68 +39,79 @@ const Sidebar = ({ activeView, setActiveView, onToggleInstruments, showInstrumen
   ]
 
   const isActive = (item) => {
-    // Check both activeView and current URL path
     if (item.path && location.pathname === item.path) return true
     if (item.id === 'home') return activeView === 'home' || location.pathname === '/home'
-    if (item.id === 'chart') return activeView === 'chart' || location.pathname === '/trade'
+    if (item.id === 'accounts') return activeView === 'accounts' || location.pathname === '/accounts' || location.pathname === '/trade'
     if (item.id === 'wallet') return activeView === 'wallet' || location.pathname === '/wallet'
     if (item.id === 'copy') return activeView === 'copy' || location.pathname === '/copytrade'
     if (item.id === 'ib') return activeView === 'ib' || location.pathname === '/ib'
     if (item.id === 'orders') return activeView === 'orders' || location.pathname === '/orders'
     if (item.id === 'profile') return activeView === 'profile' || location.pathname === '/profile'
     if (item.id === 'support') return activeView === 'support' || location.pathname === '/support'
-    if (item.id === 'instruments') return showInstruments && (activeView === 'chart' || location.pathname === '/trade')
     return false
   }
 
   return (
-    <div className="w-14 flex flex-col items-center py-4 transition-colors"
+    <div 
+      className={`${isCollapsed ? 'w-16' : 'w-56'} flex flex-col py-4 transition-all duration-300`}
       style={{ 
         backgroundColor: 'var(--bg-secondary)', 
         borderRight: '1px solid var(--border-color)' 
       }}
     >
-      {/* Logo */}
-      <div className="mb-6">
-        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-green-700 flex items-center justify-center font-bold text-white text-sm">
-          B4X
-        </div>
+      {/* Logo - Toggle Button */}
+      <div className={`mb-6 ${isCollapsed ? 'px-3' : 'px-4'}`}>
+        <button 
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className={`${isCollapsed ? 'w-10 h-10' : 'w-full h-10'} rounded-lg bg-gradient-to-br from-green-500 to-green-700 flex items-center justify-center gap-2 font-bold text-white text-sm transition-all hover:opacity-90`}
+        >
+          <span>B4X</span>
+          {!isCollapsed && (
+            <ChevronLeft size={16} className="ml-auto" />
+          )}
+        </button>
       </div>
       
       {/* Menu Items */}
-      <div className="flex-1 flex flex-col gap-2">
+      <div className={`flex-1 flex flex-col gap-1 ${isCollapsed ? 'px-3' : 'px-3'}`}>
         {menuItems.map((item, index) => {
           const active = isActive(item)
           return (
             <button
               key={index}
               onClick={item.onClick}
-              className="w-10 h-10 rounded-lg flex items-center justify-center transition-all"
+              className={`${isCollapsed ? 'w-10 h-10 justify-center' : 'w-full h-10 px-3 justify-start'} rounded-lg flex items-center gap-3 transition-all`}
               style={{
                 backgroundColor: active ? 'var(--bg-hover)' : 'transparent',
                 color: active ? 'var(--accent-green)' : 'var(--text-secondary)'
               }}
-              title={item.label}
+              title={isCollapsed ? item.label : ''}
             >
-              <item.icon size={20} />
+              <item.icon size={20} className="flex-shrink-0" />
+              {!isCollapsed && (
+                <span className="text-sm font-medium truncate">{item.label}</span>
+              )}
             </button>
           )
         })}
       </div>
       
       {/* Bottom Items */}
-      <div className="flex flex-col gap-2">
+      <div className={`flex flex-col gap-2 ${isCollapsed ? 'px-3' : 'px-3'}`}>
         {/* Theme Toggle */}
         <button 
           onClick={toggleTheme}
-          className="w-10 h-10 rounded-lg flex items-center justify-center transition-all hover:scale-110"
+          className={`${isCollapsed ? 'w-10 h-10 justify-center' : 'w-full h-10 px-3 justify-start'} rounded-lg flex items-center gap-3 transition-all hover:opacity-80`}
           style={{
             backgroundColor: 'var(--bg-hover)',
             color: isDark ? '#fbbf24' : '#3b82f6'
           }}
-          title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          title={isCollapsed ? (isDark ? 'Light Mode' : 'Dark Mode') : ''}
         >
-          {isDark ? <Sun size={20} /> : <Moon size={20} />}
+          {isDark ? <Sun size={20} className="flex-shrink-0" /> : <Moon size={20} className="flex-shrink-0" />}
+          {!isCollapsed && (
+            <span className="text-sm font-medium">{isDark ? 'Light Mode' : 'Dark Mode'}</span>
+          )}
         </button>
       </div>
     </div>

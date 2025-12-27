@@ -2,9 +2,17 @@ import React, { useState, useEffect } from 'react'
 import { ArrowLeft, User, Mail, Phone, MapPin, Loader2, Save, LogOut, Lock, Eye, EyeOff } from 'lucide-react'
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
+import { useTheme } from '../../context/ThemeContext'
 
 const MobileProfile = ({ onBack }) => {
   const navigate = useNavigate()
+  const { isDark } = useTheme()
+  const bgPrimary = isDark ? '#000000' : '#f5f5f7'
+  const bgCard = isDark ? '#0d0d0d' : '#ffffff'
+  const bgSecondary = isDark ? '#1a1a1a' : '#f2f2f7'
+  const borderColor = isDark ? '#1a1a1a' : '#e5e5ea'
+  const textPrimary = isDark ? '#fff' : '#000'
+  const textSecondary = isDark ? '#6b7280' : '#8e8e93'
   const [activeTab, setActiveTab] = useState('profile')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -108,8 +116,8 @@ const MobileProfile = ({ onBack }) => {
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center" style={{ backgroundColor: '#000000' }}>
-        <Loader2 className="animate-spin" size={24} color="#6b7280" />
+      <div className="h-full flex items-center justify-center" style={{ backgroundColor: bgPrimary }}>
+        <Loader2 className="animate-spin" size={24} color={textSecondary} />
       </div>
     )
   }
@@ -120,23 +128,23 @@ const MobileProfile = ({ onBack }) => {
   ]
 
   return (
-    <div className="h-full flex flex-col" style={{ backgroundColor: '#000000' }}>
-      <div className="flex items-center gap-3 px-4 py-3" style={{ backgroundColor: '#0d0d0d', borderBottom: '1px solid #1a1a1a' }}>
-        <button onClick={onBack} className="p-2 rounded-lg" style={{ backgroundColor: '#1a1a1a' }}>
-          <ArrowLeft size={18} color="#9ca3af" />
+    <div className="h-full flex flex-col" style={{ backgroundColor: bgPrimary }}>
+      <div className="flex items-center gap-3 px-4 py-3" style={{ backgroundColor: bgCard, borderBottom: `1px solid ${borderColor}` }}>
+        <button onClick={onBack} className="p-2 rounded-lg" style={{ backgroundColor: bgSecondary }}>
+          <ArrowLeft size={18} color={textSecondary} />
         </button>
-        <h1 className="text-lg font-semibold" style={{ color: '#fff' }}>Profile</h1>
+        <h1 className="text-lg font-semibold" style={{ color: textPrimary }}>Profile</h1>
       </div>
 
-      <div className="flex" style={{ borderBottom: '1px solid #1a1a1a' }}>
+      <div className="flex" style={{ borderBottom: `1px solid ${borderColor}` }}>
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className="flex-1 py-2 text-xs"
             style={{ 
-              color: activeTab === tab.id ? '#22c55e' : '#6b7280',
-              borderBottom: activeTab === tab.id ? '2px solid #22c55e' : '2px solid transparent'
+              color: activeTab === tab.id ? '#3b82f6' : textSecondary,
+              borderBottom: activeTab === tab.id ? '2px solid #3b82f6' : '2px solid transparent'
             }}
           >
             {tab.label}
@@ -156,59 +164,59 @@ const MobileProfile = ({ onBack }) => {
             <div className="space-y-3">
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <p className="text-xs mb-1" style={{ color: '#6b7280' }}>First Name</p>
+                  <p className="text-xs mb-1" style={{ color: textSecondary }}>First Name</p>
                   <input
                     type="text"
                     value={profileForm.firstName}
                     onChange={(e) => setProfileForm({ ...profileForm, firstName: e.target.value })}
                     className="w-full p-3 rounded-lg text-sm"
-                    style={{ backgroundColor: '#0d0d0d', color: '#fff', border: '1px solid #1a1a1a' }}
+                    style={{ backgroundColor: bgSecondary, color: textPrimary, border: `1px solid ${borderColor}` }}
                   />
                 </div>
                 <div className="flex-1">
-                  <p className="text-xs mb-1" style={{ color: '#6b7280' }}>Last Name</p>
+                  <p className="text-xs mb-1" style={{ color: textSecondary }}>Last Name</p>
                   <input
                     type="text"
                     value={profileForm.lastName}
                     onChange={(e) => setProfileForm({ ...profileForm, lastName: e.target.value })}
                     className="w-full p-3 rounded-lg text-sm"
-                    style={{ backgroundColor: '#0d0d0d', color: '#fff', border: '1px solid #1a1a1a' }}
+                    style={{ backgroundColor: bgSecondary, color: textPrimary, border: `1px solid ${borderColor}` }}
                   />
                 </div>
               </div>
 
               <div>
-                <p className="text-xs mb-1" style={{ color: '#6b7280' }}>Email (cannot change)</p>
+                <p className="text-xs mb-1" style={{ color: textSecondary }}>Email (cannot change)</p>
                 <input
                   type="email"
                   value={profileForm.email}
                   disabled
                   className="w-full p-3 rounded-lg text-sm"
-                  style={{ backgroundColor: '#0d0d0d', color: '#6b7280', border: '1px solid #1a1a1a' }}
+                  style={{ backgroundColor: bgSecondary, color: textSecondary, border: `1px solid ${borderColor}` }}
                 />
               </div>
 
               <div>
-                <p className="text-xs mb-1" style={{ color: '#6b7280' }}>Phone</p>
+                <p className="text-xs mb-1" style={{ color: textSecondary }}>Phone</p>
                 <input
                   type="tel"
                   value={profileForm.phone}
                   onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
                   placeholder="Enter phone"
                   className="w-full p-3 rounded-lg text-sm"
-                  style={{ backgroundColor: '#0d0d0d', color: '#fff', border: '1px solid #1a1a1a' }}
+                  style={{ backgroundColor: bgSecondary, color: textPrimary, border: `1px solid ${borderColor}` }}
                 />
               </div>
 
               <div>
-                <p className="text-xs mb-1" style={{ color: '#6b7280' }}>Country</p>
+                <p className="text-xs mb-1" style={{ color: textSecondary }}>Country</p>
                 <input
                   type="text"
                   value={profileForm.country}
                   onChange={(e) => setProfileForm({ ...profileForm, country: e.target.value })}
                   placeholder="Enter country"
                   className="w-full p-3 rounded-lg text-sm"
-                  style={{ backgroundColor: '#0d0d0d', color: '#fff', border: '1px solid #1a1a1a' }}
+                  style={{ backgroundColor: bgSecondary, color: textPrimary, border: `1px solid ${borderColor}` }}
                 />
               </div>
             </div>
@@ -227,50 +235,50 @@ const MobileProfile = ({ onBack }) => {
 
         {activeTab === 'security' && (
           <>
-            <div className="p-3 rounded-xl mb-4" style={{ backgroundColor: '#0d0d0d', border: '1px solid #1a1a1a' }}>
-              <p className="text-sm font-medium mb-3" style={{ color: '#fff' }}>Change Password</p>
+            <div className="p-3 rounded-xl mb-4" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
+              <p className="text-sm font-medium mb-3" style={{ color: textPrimary }}>Change Password</p>
               
               <div className="space-y-3">
                 <div>
-                  <p className="text-xs mb-1" style={{ color: '#6b7280' }}>Current Password</p>
-                  <div className="flex items-center rounded-lg" style={{ backgroundColor: '#1a1a1a', border: '1px solid #262626' }}>
+                  <p className="text-xs mb-1" style={{ color: textSecondary }}>Current Password</p>
+                  <div className="flex items-center rounded-lg" style={{ backgroundColor: bgSecondary, border: `1px solid ${borderColor}` }}>
                     <input
                       type={showCurrentPassword ? 'text' : 'password'}
                       value={passwordForm.currentPassword}
                       onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
                       className="flex-1 p-3 bg-transparent text-sm"
-                      style={{ color: '#fff' }}
+                      style={{ color: textPrimary }}
                     />
                     <button onClick={() => setShowCurrentPassword(!showCurrentPassword)} className="p-3">
-                      {showCurrentPassword ? <EyeOff size={16} color="#6b7280" /> : <Eye size={16} color="#6b7280" />}
+                      {showCurrentPassword ? <EyeOff size={16} color={textSecondary} /> : <Eye size={16} color={textSecondary} />}
                     </button>
                   </div>
                 </div>
 
                 <div>
-                  <p className="text-xs mb-1" style={{ color: '#6b7280' }}>New Password</p>
-                  <div className="flex items-center rounded-lg" style={{ backgroundColor: '#1a1a1a', border: '1px solid #262626' }}>
+                  <p className="text-xs mb-1" style={{ color: textSecondary }}>New Password</p>
+                  <div className="flex items-center rounded-lg" style={{ backgroundColor: bgSecondary, border: `1px solid ${borderColor}` }}>
                     <input
                       type={showNewPassword ? 'text' : 'password'}
                       value={passwordForm.newPassword}
                       onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
                       className="flex-1 p-3 bg-transparent text-sm"
-                      style={{ color: '#fff' }}
+                      style={{ color: textPrimary }}
                     />
                     <button onClick={() => setShowNewPassword(!showNewPassword)} className="p-3">
-                      {showNewPassword ? <EyeOff size={16} color="#6b7280" /> : <Eye size={16} color="#6b7280" />}
+                      {showNewPassword ? <EyeOff size={16} color={textSecondary} /> : <Eye size={16} color={textSecondary} />}
                     </button>
                   </div>
                 </div>
 
                 <div>
-                  <p className="text-xs mb-1" style={{ color: '#6b7280' }}>Confirm New Password</p>
+                  <p className="text-xs mb-1" style={{ color: textSecondary }}>Confirm New Password</p>
                   <input
                     type="password"
                     value={passwordForm.confirmPassword}
                     onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
                     className="w-full p-3 rounded-lg text-sm"
-                    style={{ backgroundColor: '#1a1a1a', color: '#fff', border: '1px solid #262626' }}
+                    style={{ backgroundColor: bgSecondary, color: textPrimary, border: `1px solid ${borderColor}` }}
                   />
                 </div>
               </div>

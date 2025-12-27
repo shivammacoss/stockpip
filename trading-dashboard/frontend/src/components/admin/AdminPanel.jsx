@@ -9,6 +9,8 @@ import ChargesManagement from './ChargesManagement'
 import CopyTradeManagement from './CopyTradeManagement'
 import BankSettings from './BankSettings'
 import SupportManagement from './SupportManagement'
+import AccountTypeManagement from './AccountTypeManagement'
+import KycManagement from './KycManagement'
 
 const AdminPanel = ({ initialSection = 'overview' }) => {
   const [activeSection, setActiveSection] = useState(initialSection)
@@ -33,6 +35,10 @@ const AdminPanel = ({ initialSection = 'overview' }) => {
         return <BankSettings />
       case 'support':
         return <SupportManagement />
+      case 'accounttypes':
+        return <AccountTypeManagement />
+      case 'kyc':
+        return <KycManagement />
       default:
         return <OverviewDashboard />
     }

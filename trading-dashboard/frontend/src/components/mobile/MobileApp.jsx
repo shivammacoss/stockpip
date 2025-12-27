@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { Home, TrendingUp, Wallet, Menu, X, ArrowLeft } from 'lucide-react'
+import { Home, TrendingUp, Wallet, Menu, X, ArrowLeft, Users } from 'lucide-react'
+import { useTheme } from '../../context/ThemeContext'
 import MobileHome from './MobileHome'
 import MobileTrade from './MobileTrade'
 import MobileWallet from './MobileWallet'
@@ -8,14 +9,16 @@ import MobileIB from './MobileIB'
 import MobileCopyTrade from './MobileCopyTrade'
 import MobileSupport from './MobileSupport'
 import MobileProfile from './MobileProfile'
+import MobileAccounts from './MobileAccounts'
 
 const MobileApp = () => {
+  const { isDark } = useTheme()
   const [activeTab, setActiveTab] = useState('home')
   const [showMore, setShowMore] = useState(false)
 
   const tabs = [
     { id: 'home', label: 'Home', icon: Home },
-    { id: 'trade', label: 'Trade', icon: TrendingUp },
+    { id: 'accounts', label: 'Account', icon: Users },
     { id: 'wallet', label: 'Wallet', icon: Wallet },
     { id: 'more', label: 'More', icon: Menu },
   ]
@@ -26,8 +29,13 @@ const MobileApp = () => {
     switch (activeTab) {
       case 'home':
         return <MobileHome />
+      case 'accounts':
+        return <MobileAccounts onOpenTrading={(account) => {
+          localStorage.setItem('activeTradingAccount', JSON.stringify(account))
+          setActiveTab('trade')
+        }} />
       case 'trade':
-        return <MobileTrade onBack={() => setActiveTab('home')} />
+        return <MobileTrade onBack={() => setActiveTab('accounts')} />
       case 'wallet':
         return <MobileWallet />
       case 'ib':
@@ -44,7 +52,7 @@ const MobileApp = () => {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col" style={{ backgroundColor: '#000000' }}>
+    <div className="h-screen w-screen flex flex-col" style={{ backgroundColor: isDark ? '#000000' : '#f5f5f7' }}>
       {/* Main Content */}
       <div className="flex-1 overflow-hidden">
         {renderContent()}
@@ -53,10 +61,12 @@ const MobileApp = () => {
       {/* Bottom Navigation - Hidden when in Trade view or More pages */}
       {!['trade', 'ib', 'copy', 'support', 'profile'].includes(activeTab) && (
         <nav 
-          className="flex items-center justify-around py-2"
+          className="flex items-center justify-around"
           style={{ 
-            backgroundColor: '#0d0d0d',
-            borderTop: '1px solid #1a1a1a'
+            backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
+            borderTop: `1px solid ${isDark ? '#2c2c2e' : '#e5e5ea'}`,
+            paddingTop: '8px',
+            paddingBottom: 'max(8px, env(safe-area-inset-bottom))'
           }}
         >
           {tabs.map((tab) => (
@@ -69,15 +79,15 @@ const MobileApp = () => {
                   setActiveTab(tab.id)
                 }
               }}
-              className="flex flex-col items-center py-2 px-6"
+              className="flex flex-col items-center flex-1 py-1"
             >
               <tab.icon 
                 size={20} 
-                color={activeTab === tab.id ? '#22c55e' : '#6b7280'}
+                color={activeTab === tab.id ? '#3b82f6' : (isDark ? '#8e8e93' : '#6b6b6b')}
               />
               <span 
-                className="text-xs mt-1"
-                style={{ color: activeTab === tab.id ? '#22c55e' : '#6b7280' }}
+                className="text-[10px] mt-0.5"
+                style={{ color: activeTab === tab.id ? '#3b82f6' : (isDark ? '#8e8e93' : '#6b6b6b') }}
               >
                 {tab.label}
               </span>

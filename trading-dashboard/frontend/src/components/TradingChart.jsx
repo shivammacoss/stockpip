@@ -88,69 +88,51 @@ const TradingChart = ({ symbol }) => {
     
     const colors = isDark ? darkColors : lightColors
 
-    // Create TradingView widget
+    // Use TradingView Advanced Chart embed widget
+    const container = containerRef.current
+    container.innerHTML = `
+      <div class="tradingview-widget-container" style="height:100%;width:100%">
+        <div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>
+      </div>
+    `
+    
     const script = document.createElement('script')
-    script.src = 'https://s3.tradingview.com/tv.js'
+    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
     script.async = true
-    script.onload = () => {
-      if (window.TradingView && containerRef.current) {
-        widgetRef.current = new window.TradingView.widget({
-          autosize: true,
-          symbol: getSymbol(symbol),
-          interval: '1',
-          timezone: 'Etc/UTC',
-          theme: isDark ? 'dark' : 'light',
-          style: '1',
-          locale: 'en',
-          toolbar_bg: colors.toolbar,
-          enable_publishing: false,
-          hide_top_toolbar: false,
-          hide_legend: false,
-          save_image: false,
-          container_id: 'tradingview_chart',
-          backgroundColor: colors.bg,
-          gridColor: colors.grid,
-          studies: [
-            'MASimple@tv-basicstudies'
-          ],
-          disabled_features: [
-            'header_symbol_search',
-            'header_compare'
-          ],
-          enabled_features: [
-            'hide_left_toolbar_by_default'
-          ],
-          overrides: {
-            'paneProperties.background': colors.bg,
-            'paneProperties.vertGridProperties.color': colors.grid,
-            'paneProperties.horzGridProperties.color': colors.grid,
-            'scalesProperties.backgroundColor': colors.bg,
-            'scalesProperties.lineColor': colors.border,
-            'scalesProperties.textColor': colors.text,
-          }
-        })
-      }
-    }
-    document.head.appendChild(script)
+    script.type = 'text/javascript'
+    script.innerHTML = JSON.stringify({
+      autosize: true,
+      symbol: getSymbol(symbol),
+      interval: "5",
+      timezone: "Etc/UTC",
+      theme: isDark ? "dark" : "light",
+      style: "1",
+      locale: "en",
+      allow_symbol_change: false,
+      calendar: false,
+      hide_top_toolbar: false,
+      hide_legend: false,
+      save_image: true,
+      hide_side_toolbar: false,
+      withdateranges: true,
+      details: false,
+      hotlist: false,
+      support_host: "https://www.tradingview.com"
+    })
+    
+    container.querySelector('.tradingview-widget-container').appendChild(script)
 
     return () => {
-      if (script.parentNode) {
-        script.parentNode.removeChild(script)
-      }
+      container.innerHTML = ''
     }
   }, [symbol, isDark])
 
   return (
     <div 
-      className="w-full h-full relative transition-colors"
-      style={{ backgroundColor: 'var(--bg-primary)' }}
-    >
-      <div 
-        id="tradingview_chart" 
-        ref={containerRef}
-        className="w-full h-full"
-      />
-    </div>
+      ref={containerRef}
+      className="w-full h-full"
+      style={{ backgroundColor: isDark ? '#000000' : '#ffffff' }}
+    />
   )
 }
 

@@ -43,13 +43,15 @@ const MobileOrder = ({ symbol }) => {
     
     setSubmitting(true)
     try {
+      const activeAccount = JSON.parse(localStorage.getItem('activeTradingAccount') || '{}')
       const orderData = {
         symbol,
         type: tradeType,
         amount: volume,
         orderType: orderType === 'market' ? 'market' : 'limit',
         takeProfit: takeProfit ? parseFloat(takeProfit) : null,
-        stopLoss: stopLoss ? parseFloat(stopLoss) : null
+        stopLoss: stopLoss ? parseFloat(stopLoss) : null,
+        tradingAccountId: activeAccount._id
       }
       
       if (orderType === 'pending' && pendingPrice) {

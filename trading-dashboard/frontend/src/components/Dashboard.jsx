@@ -328,8 +328,8 @@ const Dashboard = () => {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
           <img 
-            src="/bull4x-logo.png" 
-            alt="Bull4x" 
+            src="/hcfinvest-logo.png" 
+            alt="Hcfinvest" 
             className="h-14 w-auto object-contain"
           />
           <div>

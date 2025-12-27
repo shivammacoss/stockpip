@@ -17,7 +17,9 @@ import {
   Moon,
   Sun,
   Building2,
-  Headphones
+  Headphones,
+  Layers,
+  Shield
 } from 'lucide-react'
 import { useTheme } from '../../context/ThemeContext'
 
@@ -41,6 +43,8 @@ const AdminLayout = ({ children, activeSection, setActiveSection }) => {
     { id: 'ib', label: 'IB Management', icon: Users2, path: '/admin/ib' },
     { id: 'charges', label: 'Charges Management', icon: Receipt, path: '/admin/charges' },
     { id: 'copytrade', label: 'Copy Trade Management', icon: Copy, path: '/admin/copytrade' },
+    { id: 'accounttypes', label: 'Account Types', icon: Layers, path: '/admin/accounttypes' },
+    { id: 'kyc', label: 'KYC Verification', icon: Shield, path: '/admin/kyc' },
     { id: 'support', label: 'Support Tickets', icon: Headphones, path: '/admin/support' },
   ]
 

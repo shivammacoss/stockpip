@@ -31,12 +31,15 @@ const UserManagement = () => {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [showAccountsModal, setShowAccountsModal] = useState(false)
   const [selectedUser, setSelectedUser] = useState(null)
   const [formData, setFormData] = useState({
     firstName: '', lastName: '', email: '', password: '', phone: '', country: '', balance: 0, isVerified: false
   })
   const [newPassword, setNewPassword] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
+  const [tradingAccounts, setTradingAccounts] = useState([])
+  const [editingAccount, setEditingAccount] = useState(null)
 
   const getAuthHeader = () => ({
     headers: { Authorization: `Bearer ${localStorage.getItem('adminToken')}` }
@@ -171,6 +174,46 @@ const UserManagement = () => {
       isVerified: user.isVerified
     })
     setShowEditModal(true)
+  }
+
+  // Fetch trading accounts for a user
+  const fetchTradingAccounts = async (userId) => {
+    try {
+      const res = await axios.get(`/api/admin/users/${userId}/trading-accounts`, getAuthHeader())
+      if (res.data.success) {
+        setTradingAccounts(res.data.data)
+      }
+    } catch (err) {
+      console.error('Error fetching trading accounts:', err)
+    }
+  }
+
+  // Open accounts modal
+  const openAccountsModal = (user) => {
+    setSelectedUser(user)
+    fetchTradingAccounts(user._id)
+    setShowAccountsModal(true)
+  }
+
+  // Update trading account leverage
+  const handleUpdateAccount = async (accountId, updates) => {
+    try {
+      setActionLoading(true)
+      const res = await axios.put(
+        `/api/admin/users/${selectedUser._id}/trading-accounts/${accountId}`,
+        updates,
+        getAuthHeader()
+      )
+      if (res.data.success) {
+        fetchTradingAccounts(selectedUser._id)
+        setEditingAccount(null)
+        alert('Account updated successfully')
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error updating account')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   const filteredUsers = users
@@ -339,6 +382,9 @@ const UserManagement = () => {
                         <button onClick={() => openEditModal(user)} className="p-2 rounded-lg hover:bg-opacity-80" style={{ backgroundColor: 'var(--bg-hover)' }} title="Edit">
                           <Edit size={16} style={{ color: 'var(--text-secondary)' }} />
                         </button>
+                        <button onClick={() => openAccountsModal(user)} className="p-2 rounded-lg hover:bg-opacity-80" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)' }} title="Trading Accounts & Leverage">
+                          <DollarSign size={16} style={{ color: '#3b82f6' }} />
+                        </button>
                         <button onClick={() => { setSelectedUser(user); setShowPasswordModal(true); }} className="p-2 rounded-lg hover:bg-opacity-80" style={{ backgroundColor: 'var(--bg-hover)' }} title="Change Password">
                           <Key size={16} style={{ color: 'var(--text-secondary)' }} />
                         </button>
@@ -444,6 +490,103 @@ const UserManagement = () => {
                 {actionLoading ? 'Changing...' : 'Change Password'}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Trading Accounts Modal */}
+      {showAccountsModal && selectedUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-2xl rounded-2xl p-6" style={{ backgroundColor: 'var(--bg-card)', maxHeight: '80vh', overflowY: 'auto' }}>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                Trading Accounts - {selectedUser.firstName} {selectedUser.lastName}
+              </h3>
+              <button onClick={() => { setShowAccountsModal(false); setSelectedUser(null); setEditingAccount(null); }}>
+                <X size={20} style={{ color: 'var(--text-muted)' }} />
+              </button>
+            </div>
+            
+            {tradingAccounts.length === 0 ? (
+              <p className="text-center py-8" style={{ color: 'var(--text-muted)' }}>No trading accounts found</p>
+            ) : (
+              <div className="space-y-4">
+                {tradingAccounts.map(account => (
+                  <div key={account._id} className="p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)' }}>
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{account.accountNumber}</span>
+                        <span className="ml-2 text-xs px-2 py-1 rounded" style={{ backgroundColor: account.status === 'active' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: account.status === 'active' ? '#22c55e' : '#ef4444' }}>
+                          {account.status}
+                        </span>
+                      </div>
+                      <button 
+                        onClick={() => setEditingAccount(editingAccount === account._id ? null : account._id)}
+                        className="text-xs px-3 py-1 rounded-lg bg-blue-500 text-white"
+                      >
+                        {editingAccount === account._id ? 'Cancel' : 'Edit'}
+                      </button>
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-4 text-sm mb-3">
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Type: </span>
+                        <span style={{ color: 'var(--text-primary)' }}>{account.accountType?.name || 'N/A'}</span>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Balance: </span>
+                        <span style={{ color: 'var(--text-primary)' }}>${account.balance?.toFixed(2)}</span>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Leverage: </span>
+                        <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>1:{account.leverage}</span>
+                      </div>
+                    </div>
+                    
+                    {editingAccount === account._id && (
+                      <div className="mt-4 pt-4 border-t border-gray-700">
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Leverage (1-2000)</label>
+                            <input 
+                              type="number" 
+                              defaultValue={account.leverage}
+                              min="1" 
+                              max="2000"
+                              id={`leverage-${account._id}`}
+                              className="w-full px-3 py-2 rounded-lg text-sm"
+                              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Balance</label>
+                            <input 
+                              type="number" 
+                              defaultValue={account.balance}
+                              step="0.01"
+                              id={`balance-${account._id}`}
+                              className="w-full px-3 py-2 rounded-lg text-sm"
+                              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                            />
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            const newLeverage = parseInt(document.getElementById(`leverage-${account._id}`).value)
+                            const newBalance = parseFloat(document.getElementById(`balance-${account._id}`).value)
+                            handleUpdateAccount(account._id, { leverage: newLeverage, balance: newBalance })
+                          }}
+                          disabled={actionLoading}
+                          className="w-full py-2 rounded-lg bg-green-500 text-white font-medium text-sm disabled:opacity-50"
+                        >
+                          {actionLoading ? 'Saving...' : 'Save Changes'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

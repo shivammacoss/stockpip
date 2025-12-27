@@ -45,12 +45,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(
               {/* Protected User Routes */}
               <Route path="/home" element={<ProtectedRoute><App initialView="home" /></ProtectedRoute>} />
               <Route path="/trade" element={<ProtectedRoute><App initialView="chart" /></ProtectedRoute>} />
+              {/* Trade route requires active trading account - App.jsx will redirect to accounts if none */}
               <Route path="/wallet" element={<ProtectedRoute><App initialView="wallet" /></ProtectedRoute>} />
               <Route path="/copytrade" element={<ProtectedRoute><App initialView="copy" /></ProtectedRoute>} />
               <Route path="/ib" element={<ProtectedRoute><App initialView="ib" /></ProtectedRoute>} />
               <Route path="/orders" element={<ProtectedRoute><App initialView="orders" /></ProtectedRoute>} />
               <Route path="/profile" element={<ProtectedRoute><App initialView="profile" /></ProtectedRoute>} />
               <Route path="/support" element={<ProtectedRoute><App initialView="support" /></ProtectedRoute>} />
+              <Route path="/accounts" element={<ProtectedRoute><App initialView="accounts" /></ProtectedRoute>} />
               
               {/* Admin Routes */}
               <Route path="/admin/login" element={<AdminLogin />} />
@@ -63,6 +65,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
               <Route path="/admin/ib" element={<AdminProtectedRoute><AdminPanel initialSection="ib" /></AdminProtectedRoute>} />
               <Route path="/admin/charges" element={<AdminProtectedRoute><AdminPanel initialSection="charges" /></AdminProtectedRoute>} />
               <Route path="/admin/copytrade" element={<AdminProtectedRoute><AdminPanel initialSection="copytrade" /></AdminProtectedRoute>} />
+              <Route path="/admin/accounttypes" element={<AdminProtectedRoute><AdminPanel initialSection="accounttypes" /></AdminProtectedRoute>} />
+              <Route path="/admin/kyc" element={<AdminProtectedRoute><AdminPanel initialSection="kyc" /></AdminProtectedRoute>} />
               <Route path="/admin/support" element={<AdminProtectedRoute><AdminPanel initialSection="support" /></AdminProtectedRoute>} />
               
               {/* Default redirect */}

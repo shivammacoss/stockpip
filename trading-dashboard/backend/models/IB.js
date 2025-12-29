@@ -25,21 +25,24 @@ const ibSchema = new mongoose.Schema({
     default: 'active'
   },
   
-  // Commission Settings (can be overridden by admin)
-  commissionType: {
-    type: String,
-    enum: ['per_lot', 'percentage_spread', 'percentage_profit', 'first_deposit', 'volume_tier', 'hybrid'],
-    default: 'per_lot'
-  },
-  commissionValue: {
+  // Commission Level (references IBCommissionSettings levels)
+  commissionLevel: {
     type: Number,
-    default: 5 // $5 per lot or 5% depending on type
+    default: 1 // Default level (Standard)
   },
   
-  // First Deposit Commission
-  firstDepositCommission: {
+  // Custom Commission Override (if admin sets custom rate for this IB)
+  customCommission: {
     enabled: { type: Boolean, default: false },
-    percentage: { type: Number, default: 10 }
+    perLot: { type: Number, default: 0 } // Custom $ per lot (overrides level)
+  },
+  
+  // Upgrade Request
+  upgradeRequest: {
+    pending: { type: Boolean, default: false },
+    requestedLevel: { type: Number },
+    requestedAt: { type: Date },
+    note: { type: String }
   },
   
   // Wallet
@@ -103,6 +106,39 @@ ibSchema.pre('save', async function(next) {
 // Get referral link
 ibSchema.methods.getReferralLink = function(baseUrl = 'https://hcfinvest.com') {
   return `${baseUrl}/register?ref=${this.ibId}`;
+};
+
+// Get effective commission per lot
+ibSchema.methods.getEffectiveCommission = async function() {
+  // If custom commission is set, use it
+  if (this.customCommission?.enabled && this.customCommission?.perLot > 0) {
+    return this.customCommission.perLot;
+  }
+  // Otherwise, get from level settings
+  const IBCommissionSettings = require('./IBCommissionSettings');
+  return await IBCommissionSettings.getCommissionForLevel(this.commissionLevel);
+};
+
+// Check and auto-upgrade based on referral count
+ibSchema.methods.checkAutoUpgrade = async function() {
+  const IBCommissionSettings = require('./IBCommissionSettings');
+  const settings = await IBCommissionSettings.getSettings();
+  
+  // Only auto-upgrade if enabled
+  if (!settings.autoUpgradeEnabled) {
+    return false;
+  }
+  
+  const referralCount = this.stats?.totalReferrals || 0;
+  const eligibleLevel = await IBCommissionSettings.getEligibleLevel(referralCount);
+  
+  // Only upgrade if eligible level is higher than current (no downgrades)
+  if (eligibleLevel > this.commissionLevel) {
+    this.commissionLevel = eligibleLevel;
+    await this.save();
+    return true;
+  }
+  return false;
 };
 
 // Indexes

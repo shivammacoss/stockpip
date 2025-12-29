@@ -154,10 +154,7 @@ class TradeEngine {
       throw new Error(`Invalid symbol: ${symbol}. Market may be closed.`);
     }
 
-    // Get execution price (ask for buy, bid for sell)
-    const executionPrice = type === 'buy' ? price.ask : price.bid;
-    
-    // Get user and their active trading account FIRST to get leverage
+    // Get user and their active trading account FIRST to get accountTypeId for charges
     const user = await User.findById(userId);
     if (!user) throw new Error('User not found');
     
@@ -168,41 +165,62 @@ class TradeEngine {
         _id: tradingAccountId,
         user: userId, 
         status: 'active'
-      });
+      }).populate('accountType').select('+leverage');
     }
     if (!tradingAccount) {
       tradingAccount = await TradingAccount.findOne({ 
         user: userId, 
         status: 'active',
         isDemo: false 
-      }).sort({ createdAt: -1 });
+      }).populate('accountType').select('+leverage').sort({ createdAt: -1 });
     }
     
-    // User can select leverage up to account max, default to account leverage
-    const maxAccountLeverage = tradingAccount?.leverage || 100;
-    const tradeLeverage = Math.min(requestedLeverage || maxAccountLeverage, maxAccountLeverage);
+    console.log(`[TradeEngine] Trading Account: ${tradingAccount?._id}, Balance: ${tradingAccount?.balance}, DB Leverage: ${tradingAccount?.leverage}`);
+    
+    // Get accountTypeId for charges lookup
+    const accountTypeId = tradingAccount?.accountType?._id || null;
+
+    // Get charges for this trade (pass accountTypeId for proper lookup)
+    const charges = await this.getChargesForTrade(symbol, userId, accountTypeId);
+    
+    console.log(`[TradeEngine] Charges for ${symbol}: spreadPips=${charges.spreadPips}, commissionPerLot=${charges.commissionPerLot}, source=${charges.source}`);
+    
+    // Get execution price (ask for buy, bid for sell)
+    // Apply admin spread markup to the price (spread in pips added to entry)
+    const basePrice = type === 'buy' ? price.ask : price.bid;
+    const pipSize = this.getPipSize(symbol);
+    const spreadMarkup = (charges.spreadPips || 0) * pipSize;
+    // For buy: add spread to price (worse for user), For sell: subtract spread (worse for user)
+    const executionPrice = type === 'buy' ? basePrice + spreadMarkup : basePrice - spreadMarkup;
+    
+    // User selects their leverage - use it directly
+    const parsedRequestedLeverage = requestedLeverage ? parseInt(requestedLeverage) : 100;
+    // Allow up to 2000x leverage (safety cap)
+    const tradeLeverage = Math.min(Math.max(parsedRequestedLeverage, 1), 2000);
     const usesTradingAccount = !!tradingAccount;
     const availableBalance = usesTradingAccount ? tradingAccount.balance : user.balance;
+    
+    console.log(`[TradeEngine] Leverage: requested=${requestedLeverage}, using=${tradeLeverage}`);
     
     // Available margin = balance * leverage
     const availableMargin = availableBalance * tradeLeverage;
     
-    // Get charges for this trade
-    const charges = await this.getChargesForTrade(symbol, userId);
-    
     // Calculate margin required (using trade-specific leverage)
     const margin = this.calculateMargin(symbol, amount, executionPrice, tradeLeverage);
     
-    // Calculate fees and costs
-    const feePercentage = charges.feePercentage / 100;
-    let fee = margin * feePercentage;
-    if (charges.minFee > 0 && fee < charges.minFee) fee = charges.minFee;
-    if (charges.maxFee > 0 && fee > charges.maxFee) fee = charges.maxFee;
+    // SIMPLIFIED: Only commission per lot (no percentage fees)
+    // Commission from TradingCharge settings
+    const commissionPerLot = charges.commissionPerLot || 0;
+    const commission = amount * commissionPerLot; // lots × $/lot
     
-    const commission = charges.commissionPerLot * amount;
+    // Total trading charge = commission only
+    const tradingCharge = Math.round(commission * 100) / 100;
+    
+    // Spread cost for reference (spread is applied to execution price, not deducted separately)
     const spreadCost = this.calculateSpreadCost(symbol, amount, charges.spreadPips);
     
-    const totalRequired = margin + fee + commission + spreadCost;
+    // Total required = margin + trading charges (deducted immediately on open)
+    const totalRequired = margin + tradingCharge;
     
     // Check if user has enough balance for this trade
     if (availableBalance < totalRequired) {
@@ -234,8 +252,9 @@ class TradeEngine {
 
     console.log(`[TradeEngine] Creating trade for user ${userId}: ${type} ${amount} ${symbol} @ ${executionPrice}`);
     console.log(`[TradeEngine] Using ${usesTradingAccount ? 'Trading Account' : 'User Balance'}: ${availableBalance}, Required: ${totalRequired}`);
+    console.log(`[TradeEngine] Charges: Commission $${commission.toFixed(2)} (${amount} lots × $${commissionPerLot}/lot), Spread: ${charges.spreadPips} pips`);
 
-    // Create trade
+    // Create trade with charges recorded
     const trade = await Trade.create({
       user: userId,
       tradingAccount: usesTradingAccount ? tradingAccount._id : null,
@@ -249,11 +268,11 @@ class TradeEngine {
       leverage: tradeLeverage,
       stopLoss,
       takeProfit,
-      fee,
       margin,
       spread: charges.spreadPips,
       spreadCost,
-      commission,
+      commission,                    // Per-lot commission
+      tradingCharge,                 // Total charge (commission only now)
       status: 'open'
     });
 
@@ -273,12 +292,12 @@ class TradeEngine {
     
     console.log(`[TradeEngine] Balance deducted. Before: ${balanceBefore}, After: ${usesTradingAccount ? tradingAccount.balance : user.balance}`);
 
-    // Create transaction record
+    // Create transaction record with clear breakdown
     await Transaction.create({
       user: userId,
       type: 'margin_deduction',
       amount: -totalRequired,
-      description: `Margin for ${type.toUpperCase()} ${amount} ${symbol} @ ${executionPrice}`,
+      description: `${type.toUpperCase()} ${amount} lots ${symbol} @ ${executionPrice.toFixed(5)} | Margin: $${margin.toFixed(2)} + Charges: $${tradingCharge.toFixed(2)}`,
       balanceBefore,
       balanceAfter: usesTradingAccount ? tradingAccount.balance : user.balance,
       status: 'completed',
@@ -478,10 +497,10 @@ class TradeEngine {
         userPos.totalMargin += trade.margin || 0;
       }
 
-      // Check margin levels for each user - DISABLED temporarily to fix false stop-outs
-      // for (const [userId, positions] of userPositions) {
-      //   await this.checkMarginLevel(userId, positions);
-      // }
+      // Check margin levels for each user - Auto stop-out when equity reaches 0
+      for (const [userId, positions] of userPositions) {
+        await this.checkMarginLevel(userId, positions);
+      }
     } catch (err) {
       console.error('[TradeEngine] Error checking open positions:', err);
     } finally {
@@ -495,24 +514,43 @@ class TradeEngine {
    */
   async checkMarginLevel(userId, positions) {
     try {
-      // Get trading account with leverage - must match the one used for trading
-      const tradingAccount = await TradingAccount.findOne({ 
-        user: userId, 
-        status: 'active'
-      }).sort({ createdAt: -1 }).populate('accountType');
-      
-      // If no trading account or no open positions, skip
-      if (!tradingAccount || positions.trades.length === 0) return;
+      // Group trades by trading account
+      const accountTrades = new Map();
+      for (const trade of positions.trades) {
+        const accId = trade.tradingAccount?.toString() || 'wallet';
+        if (!accountTrades.has(accId)) {
+          accountTrades.set(accId, { trades: [], totalPnL: 0 });
+        }
+        const accPos = accountTrades.get(accId);
+        accPos.trades.push(trade);
+        const price = this.getPrice(trade.symbol);
+        if (price) {
+          const currentPrice = trade.type === 'buy' ? price.bid : price.ask;
+          accPos.totalPnL += this.calculatePnL(trade, currentPrice);
+        }
+      }
 
-      const balance = tradingAccount.balance;
-      const equity = balance + positions.totalPnL;
-      
-      // Auto Square Off ONLY when:
-      // Equity goes to 0 or negative (losses exceed balance)
-      // This means user's floating losses have consumed their entire balance
-      if (equity <= 0) {
-        console.log(`[TradeEngine] AUTO SQUARE OFF for user ${userId}. Balance: ${balance}, Equity: ${equity}, PnL: ${positions.totalPnL}, Trades: ${positions.trades.length}`);
-        await this.stopOut(userId, positions.trades, equity, 0);
+      // Check each trading account separately
+      for (const [accId, accPositions] of accountTrades) {
+        let balance = 0;
+        
+        if (accId === 'wallet') {
+          const user = await User.findById(userId);
+          balance = user?.balance || 0;
+        } else {
+          const tradingAccount = await TradingAccount.findById(accId);
+          balance = tradingAccount?.balance || 0;
+        }
+
+        const equity = balance + accPositions.totalPnL;
+        
+        // Auto Square Off when equity goes to 0 or negative
+        // Stop out at 10% of balance remaining as safety buffer
+        const stopOutLevel = balance * 0.1; // 10% stop-out level
+        if (equity <= stopOutLevel && accPositions.trades.length > 0) {
+          console.log(`[TradeEngine] STOP OUT for user ${userId}, account ${accId}. Balance: ${balance.toFixed(2)}, Equity: ${equity.toFixed(2)}, PnL: ${accPositions.totalPnL.toFixed(2)}`);
+          await this.stopOut(userId, accPositions.trades, equity, 0);
+        }
       }
     } catch (err) {
       console.error('[TradeEngine] Error checking margin level:', err);
@@ -559,12 +597,21 @@ class TradeEngine {
         return trade;
       }
       
-      const pnl = this.calculatePnL(trade, closePrice);
+      const rawPnl = this.calculatePnL(trade, closePrice);
       
-      console.log(`[TradeEngine] Closing trade ${trade._id}: ${trade.symbol} @ ${closePrice}, PnL: ${pnl.toFixed(2)}, reason: ${reason}`);
+      // Trading charges were already deducted on trade OPEN
+      // So on close, we just record the raw PnL (no double deduction)
+      // The tradingCharge stored in trade was already deducted from balance
+      const tradingChargeOnOpen = trade.tradingCharge || 0;
+      
+      // Final PnL = Raw PnL (charges already paid on open)
+      const pnl = rawPnl;
+      
+      console.log(`[TradeEngine] Closing trade ${trade._id}: ${trade.symbol} @ ${closePrice}, PnL: ${pnl.toFixed(2)} (charges $${tradingChargeOnOpen.toFixed(2)} already paid on open), reason: ${reason}`);
       
       trade.closePrice = closePrice;
       trade.profit = pnl;
+      trade.rawProfit = rawPnl;
       trade.status = 'closed';
       trade.closedAt = new Date();
       trade.closeReason = reason;
@@ -582,7 +629,15 @@ class TradeEngine {
       
       if (usesTradingAccount) {
         const balanceBefore = tradingAccount.balance;
-        tradingAccount.balance += marginReturn + pnl;
+        let newBalance = tradingAccount.balance + marginReturn + pnl;
+        
+        // Prevent balance from going negative - cap loss at available balance
+        if (newBalance < 0) {
+          console.log(`[TradeEngine] Capping loss to prevent negative balance. Would be: ${newBalance.toFixed(2)}, setting to 0`);
+          newBalance = 0;
+        }
+        
+        tradingAccount.balance = newBalance;
         tradingAccount.margin -= trade.margin;
         if (tradingAccount.margin < 0) tradingAccount.margin = 0;
         if (pnl >= 0) {
@@ -605,7 +660,15 @@ class TradeEngine {
         });
       } else if (user) {
         const balanceBefore = user.balance;
-        user.balance += marginReturn + pnl;
+        let newBalance = user.balance + marginReturn + pnl;
+        
+        // Prevent balance from going negative - cap loss at available balance
+        if (newBalance < 0) {
+          console.log(`[TradeEngine] Capping user wallet loss. Would be: ${newBalance.toFixed(2)}, setting to 0`);
+          newBalance = 0;
+        }
+        
+        user.balance = newBalance;
         await user.save();
 
         // Create transaction record
@@ -632,11 +695,11 @@ class TradeEngine {
           message: `${emoji} Trade closed (${reason}): ${trade.symbol} P/L: $${pnl.toFixed(2)}`
         });
 
-        // Process IB commission for this trade
+        // Process IB commission for this trade (pass trading charge for reference)
         try {
           const IBCommissionEngine = require('./ibCommissionEngine');
           const ibEngine = new IBCommissionEngine(this.io);
-          await ibEngine.processTradeCommission(trade, user);
+          await ibEngine.processTradeCommission(trade, user, tradingCharge);
         } catch (ibErr) {
           console.error('[TradeEngine] IB commission error:', ibErr);
         }
@@ -668,14 +731,16 @@ class TradeEngine {
 
   /**
    * Calculate P&L for a trade
+   * P&L is based on actual position size, NOT leveraged
+   * Loss is limited to account balance (stop-out protection)
    */
   calculatePnL(trade, currentPrice) {
-    const pipSize = this.getPipSize(trade.symbol);
     const priceDiff = trade.type === 'buy' 
       ? currentPrice - trade.price 
       : trade.price - currentPrice;
     
-    // P&L = price difference * amount * contract size * leverage
+    // P&L = price difference × lots × contract size (NO leverage)
+    // Leverage only affects margin required to open, not P&L
     let contractSize = 100000; // Standard forex
     if (trade.symbol.includes('XAU')) contractSize = 100;
     else if (trade.symbol.includes('XAG')) contractSize = 5000;
@@ -827,10 +892,11 @@ class TradeEngine {
 
   /**
    * Get charges for a trade (from database or defaults)
+   * Now accepts accountTypeId to properly look up account type specific charges
    */
-  async getChargesForTrade(symbol, userId) {
+  async getChargesForTrade(symbol, userId, accountTypeId = null) {
     try {
-      const charges = await TradingCharge.getChargesForTrade(symbol, userId);
+      const charges = await TradingCharge.getChargesForTrade(symbol, userId, accountTypeId);
       return charges;
     } catch (err) {
       console.error('[TradeEngine] Error getting charges:', err);
@@ -838,11 +904,6 @@ class TradeEngine {
       return {
         spreadPips: this.getDefaultSpread(symbol),
         commissionPerLot: 0,
-        swapLong: 0,
-        swapShort: 0,
-        feePercentage: 0.1,
-        minFee: 0,
-        maxFee: 0,
         source: 'default'
       };
     }
@@ -878,6 +939,29 @@ class TradeEngine {
       'BTCUSD': 1, 'ETHUSD': 0.01
     };
     return pipSizes[symbol] || 0.0001;
+  }
+
+  /**
+   * Get contract size for symbol (value of 1 lot)
+   */
+  getContractSize(symbol) {
+    const upperSymbol = symbol.toUpperCase();
+    
+    // Metals
+    if (upperSymbol.includes('XAU')) return 100;      // 100 oz gold
+    if (upperSymbol.includes('XAG')) return 5000;     // 5000 oz silver
+    
+    // Crypto
+    if (upperSymbol.includes('BTC')) return 1;        // 1 BTC
+    if (upperSymbol.includes('ETH')) return 1;        // 1 ETH
+    if (upperSymbol.includes('SOL')) return 1;
+    if (upperSymbol.includes('XRP')) return 1;
+    
+    // Indices
+    if (['US30', 'US500', 'NAS100', 'UK100', 'GER40'].includes(upperSymbol)) return 1;
+    
+    // Forex (standard lot = 100,000 units)
+    return 100000;
   }
 
   /**

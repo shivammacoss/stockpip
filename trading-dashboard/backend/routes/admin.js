@@ -3,6 +3,8 @@ const router = express.Router();
 const User = require('../models/User');
 const Trade = require('../models/Trade');
 const Transaction = require('../models/Transaction');
+const TradingAccount = require('../models/TradingAccount');
+const Settings = require('../models/Settings');
 const { protectAdmin } = require('./adminAuth');
 const { exportAllCollections, createBackup } = require('../config/db');
 
@@ -10,26 +12,39 @@ const { exportAllCollections, createBackup } = require('../config/db');
 router.use(protectAdmin);
 
 // @route   GET /api/admin/dashboard
-// @desc    Get admin dashboard stats
+// @desc    Get admin dashboard stats with comprehensive data
 // @access  Admin
 router.get('/dashboard', async (req, res) => {
   try {
-    console.log('[Admin Dashboard] Fetching stats...');
+    console.log('[Admin Dashboard] Fetching comprehensive stats...');
     
     const [
       totalUsers,
       totalUserFund,
+      tradingAccountStats,
       pendingDeposits,
       pendingWithdrawals,
       totalCharges,
-      tradePnL
+      tradePnL,
+      depositStats,
+      withdrawalStats,
+      openTradesCount
     ] = await Promise.all([
-      // Total Users (count all users, not just role: 'user')
+      // Total Users
       User.countDocuments(),
       
-      // Total User Fund (sum of all user balances)
+      // Total User Wallet Balance
       User.aggregate([
         { $group: { _id: null, total: { $sum: '$balance' } } }
+      ]),
+      
+      // Trading Account Stats (Live vs Demo)
+      TradingAccount.aggregate([
+        { $group: { 
+          _id: '$isDemo',
+          totalBalance: { $sum: '$balance' },
+          count: { $sum: 1 }
+        }}
       ]),
       
       // Pending Deposit Requests
@@ -54,25 +69,97 @@ router.get('/dashboard', async (req, res) => {
         { $group: { 
           _id: null, 
           totalWin: { $sum: { $cond: [{ $gt: ['$profit', 0] }, '$profit', 0] } },
-          totalLoss: { $sum: { $cond: [{ $lt: ['$profit', 0] }, { $abs: '$profit' }, 0] } }
+          totalLoss: { $sum: { $cond: [{ $lt: ['$profit', 0] }, { $abs: '$profit' }, 0] } },
+          closedCount: { $sum: 1 }
         }}
-      ])
+      ]),
+      
+      // Total Deposits (completed)
+      Transaction.aggregate([
+        { $match: { type: 'deposit', status: 'completed' } },
+        { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+      ]),
+      
+      // Total Withdrawals (completed)
+      Transaction.aggregate([
+        { $match: { type: 'withdrawal', status: 'completed' } },
+        { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+      ]),
+      
+      // Open Trades Count
+      Trade.countDocuments({ status: 'open' })
     ]);
 
+    // Parse trading account stats
+    let liveAccountBalance = 0, demoAccountBalance = 0, liveAccountCount = 0, demoAccountCount = 0;
+    tradingAccountStats.forEach(stat => {
+      if (stat._id === true) {
+        demoAccountBalance = stat.totalBalance || 0;
+        demoAccountCount = stat.count || 0;
+      } else {
+        liveAccountBalance = stat.totalBalance || 0;
+        liveAccountCount = stat.count || 0;
+      }
+    });
+
     const charges = totalCharges[0] || { totalFees: 0, totalCommission: 0, totalSpread: 0 };
-    const pnl = tradePnL[0] || { totalWin: 0, totalLoss: 0 };
+    const pnl = tradePnL[0] || { totalWin: 0, totalLoss: 0, closedCount: 0 };
     const totalEarnings = (charges.totalFees || 0) + (charges.totalCommission || 0) + (charges.totalSpread || 0);
     const brokerProfit = (pnl.totalLoss || 0) - (pnl.totalWin || 0);
 
+    // Get currency settings
+    let currencySettings = {
+      depositRate: 83,
+      withdrawalRate: 83,
+      depositMarkup: 0,
+      withdrawalMarkup: 0
+    };
+    try {
+      currencySettings = {
+        depositRate: await Settings.getSetting('deposit_inr_to_usd_rate', 83),
+        withdrawalRate: await Settings.getSetting('withdrawal_usd_to_inr_rate', 83),
+        depositMarkup: await Settings.getSetting('deposit_currency_markup', 0),
+        withdrawalMarkup: await Settings.getSetting('withdrawal_currency_markup', 0)
+      };
+    } catch (e) {
+      console.log('Could not fetch currency settings');
+    }
+
     const responseData = {
+      // User Stats
       totalUsers,
       totalUserFund: totalUserFund[0]?.total || 0,
+      
+      // Trading Account Stats
+      liveAccountBalance,
+      demoAccountBalance,
+      liveAccountCount,
+      demoAccountCount,
+      totalTradingBalance: liveAccountBalance + demoAccountBalance,
+      
+      // Transaction Stats
       pendingDeposits,
       pendingWithdrawals,
+      totalDeposits: depositStats[0]?.total || 0,
+      totalWithdrawals: withdrawalStats[0]?.total || 0,
+      depositCount: depositStats[0]?.count || 0,
+      withdrawalCount: withdrawalStats[0]?.count || 0,
+      
+      // Trading Stats
+      openTradesCount,
+      closedTradesCount: pnl.closedCount || 0,
+      
+      // Earnings & Profit
       totalEarnings,
+      totalFees: charges.totalFees || 0,
+      totalCommission: charges.totalCommission || 0,
+      totalSpread: charges.totalSpread || 0,
       brokerProfit,
       totalWin: pnl.totalWin || 0,
-      totalLoss: pnl.totalLoss || 0
+      totalLoss: pnl.totalLoss || 0,
+      
+      // Currency Settings
+      currencySettings
     };
 
     console.log('[Admin Dashboard] Stats:', responseData);

@@ -31,6 +31,7 @@ const tradingAccountsRoutes = require('./routes/tradingAccounts');
 const adminAccountTypesRoutes = require('./routes/adminAccountTypes');
 const kycRoutes = require('./routes/kyc');
 const adminKycRoutes = require('./routes/adminKyc');
+const adminSettingsRoutes = require('./routes/adminSettings');
 
 const app = express();
 const server = http.createServer(app);
@@ -80,6 +81,7 @@ app.use('/api/admin/charges', adminChargesRoutes);
 app.use('/api/admin/trades', adminTradesRoutes);
 app.use('/api/admin/account-types', adminAccountTypesRoutes);
 app.use('/api/admin/kyc', adminKycRoutes);
+app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Health check

@@ -9,15 +9,17 @@ const { protectAdmin } = require('./adminAuth');
 // @access  Admin
 router.get('/', protectAdmin, async (req, res) => {
   try {
-    const { scopeType, segment, symbol } = req.query;
+    const { scopeType, segment, symbol, accountTypeId } = req.query;
     const query = {};
     
     if (scopeType) query.scopeType = scopeType;
     if (segment) query.segment = segment;
     if (symbol) query.symbol = symbol.toUpperCase();
+    if (accountTypeId) query.accountTypeId = accountTypeId;
 
     const charges = await TradingCharge.find(query)
       .populate('userId', 'firstName lastName email')
+      .populate('accountTypeId', 'name code color')
       .populate('createdBy', 'name')
       .sort({ scopeType: 1, createdAt: -1 });
 
@@ -33,8 +35,9 @@ router.get('/', protectAdmin, async (req, res) => {
 // @access  Admin
 router.get('/stats', protectAdmin, async (req, res) => {
   try {
-    const [global, segment, symbol, user, total] = await Promise.all([
+    const [global, accountType, segment, symbol, user, total] = await Promise.all([
       TradingCharge.countDocuments({ scopeType: 'global', isActive: true }),
+      TradingCharge.countDocuments({ scopeType: 'accountType', isActive: true }),
       TradingCharge.countDocuments({ scopeType: 'segment', isActive: true }),
       TradingCharge.countDocuments({ scopeType: 'symbol', isActive: true }),
       TradingCharge.countDocuments({ scopeType: 'user', isActive: true }),
@@ -43,7 +46,7 @@ router.get('/stats', protectAdmin, async (req, res) => {
 
     res.json({
       success: true,
-      data: { global, segment, symbol, user, total }
+      data: { global, accountType, segment, symbol, user, total }
     });
   } catch (error) {
     console.error('Get charges stats error:', error);
@@ -61,17 +64,16 @@ router.post('/', protectAdmin, async (req, res) => {
       segment,
       symbol,
       userId,
+      accountTypeId,
       spreadPips,
       commissionPerLot,
-      swapLong,
-      swapShort,
-      feePercentage,
-      minFee,
-      maxFee,
       description
     } = req.body;
 
     // Validate based on scopeType
+    if (scopeType === 'accountType' && !accountTypeId) {
+      return res.status(400).json({ success: false, message: 'Account type is required for accountType charges' });
+    }
     if (scopeType === 'segment' && !segment) {
       return res.status(400).json({ success: false, message: 'Segment is required for segment-type charges' });
     }
@@ -84,6 +86,7 @@ router.post('/', protectAdmin, async (req, res) => {
 
     // Check for duplicate
     const existingQuery = { scopeType };
+    if (accountTypeId) existingQuery.accountTypeId = accountTypeId;
     if (segment) existingQuery.segment = segment;
     if (symbol) existingQuery.symbol = symbol.toUpperCase();
     if (userId) existingQuery.userId = userId;
@@ -95,16 +98,12 @@ router.post('/', protectAdmin, async (req, res) => {
 
     const charge = await TradingCharge.create({
       scopeType,
+      accountTypeId: scopeType === 'accountType' ? accountTypeId : null,
       segment: scopeType === 'segment' ? segment : null,
       symbol: scopeType === 'symbol' ? symbol.toUpperCase() : null,
       userId: scopeType === 'user' ? userId : null,
       spreadPips: spreadPips || 0,
       commissionPerLot: commissionPerLot || 0,
-      swapLong: swapLong || 0,
-      swapShort: swapShort || 0,
-      feePercentage: feePercentage || 0.1,
-      minFee: minFee || 0,
-      maxFee: maxFee || 0,
       description,
       createdBy: req.admin._id
     });
@@ -124,11 +123,6 @@ router.put('/:id', protectAdmin, async (req, res) => {
     const {
       spreadPips,
       commissionPerLot,
-      swapLong,
-      swapShort,
-      feePercentage,
-      minFee,
-      maxFee,
       description,
       isActive
     } = req.body;
@@ -138,11 +132,6 @@ router.put('/:id', protectAdmin, async (req, res) => {
       {
         spreadPips,
         commissionPerLot,
-        swapLong,
-        swapShort,
-        feePercentage,
-        minFee,
-        maxFee,
         description,
         isActive
       },

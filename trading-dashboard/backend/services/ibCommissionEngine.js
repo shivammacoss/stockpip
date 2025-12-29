@@ -1,6 +1,8 @@
 const IB = require('../models/IB');
 const IBReferral = require('../models/IBReferral');
 const IBCommissionLog = require('../models/IBCommissionLog');
+const IBCommissionSettings = require('../models/IBCommissionSettings');
+const TradingCharge = require('../models/TradingCharge');
 
 class IBCommissionEngine {
   constructor(io) {
@@ -8,7 +10,8 @@ class IBCommissionEngine {
   }
 
   // Calculate and credit commission when a trade closes
-  async processTradeCommission(trade, user) {
+  // tradingCharge = total charge deducted from user's PnL
+  async processTradeCommission(trade, user, tradingCharge = 0) {
     try {
       // Find if this user was referred by an IB
       const referral = await IBReferral.findOne({ 
@@ -28,27 +31,12 @@ class IBCommissionEngine {
         return null;
       }
 
-      // Calculate commission based on IB's commission type
-      let commission = 0;
+      // Get IB's effective commission per lot (using new level-based system)
+      const effectiveCommissionPerLot = await ib.getEffectiveCommission();
       const lots = trade.lots || trade.amount || 0;
-
-      switch (ib.commissionType) {
-        case 'per_lot':
-          commission = lots * ib.commissionValue;
-          break;
-        case 'percentage_spread':
-          // Assuming spread is stored in trade
-          const spread = trade.spread || 0;
-          commission = (spread * lots * 100000 * 0.0001) * (ib.commissionValue / 100);
-          break;
-        case 'percentage_profit':
-          if (trade.profit > 0) {
-            commission = trade.profit * (ib.commissionValue / 100);
-          }
-          break;
-        default:
-          commission = lots * ib.commissionValue;
-      }
+      
+      // IB commission = lots traded × commission per lot (from IB's level)
+      let commission = lots * effectiveCommissionPerLot;
 
       if (commission <= 0) {
         return null;
@@ -66,11 +54,12 @@ class IBCommissionEngine {
         tradeId: trade._id,
         symbol: trade.symbol,
         lots: lots,
-        commissionType: ib.commissionType,
-        commissionRate: ib.commissionValue,
+        commissionType: 'per_lot',
+        commissionRate: effectiveCommissionPerLot,
         commissionAmount: commission,
+        tradingCharge: tradingCharge, // Total charge deducted from user
         status: 'credited',
-        description: `Commission for ${trade.symbol} trade (${lots} lots)`
+        description: `Commission for ${trade.symbol} trade (${lots} lots @ $${effectiveCommissionPerLot}/lot)`
       });
 
       // Credit IB wallet
@@ -91,11 +80,12 @@ class IBCommissionEngine {
         this.io.to(`user_${ib.userId}`).emit('ib_commission', {
           amount: commission,
           source: trade.symbol,
-          type: 'trade'
+          type: 'trade',
+          lots: lots
         });
       }
 
-      console.log(`[IBEngine] Credited $${commission} to IB ${ib.ibId} for trade`);
+      console.log(`[IBEngine] Credited $${commission} to IB ${ib.ibId} for trade (${lots} lots @ $${effectiveCommissionPerLot}/lot)`);
       return commissionLog;
 
     } catch (error) {

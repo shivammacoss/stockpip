@@ -30,6 +30,10 @@ router.get('/bank-settings', async (req, res) => {
 router.put('/bank-settings', async (req, res) => {
   try {
     const {
+      // Multiple accounts (new)
+      bankAccounts,
+      upiAccounts,
+      // Legacy single fields
       bankName,
       accountNumber,
       accountHolderName,
@@ -47,6 +51,11 @@ router.put('/bank-settings', async (req, res) => {
 
     let settings = await BankSettings.getSettings();
 
+    // Multiple accounts (new)
+    if (bankAccounts !== undefined) settings.bankAccounts = bankAccounts;
+    if (upiAccounts !== undefined) settings.upiAccounts = upiAccounts;
+    
+    // Legacy single fields
     if (bankName !== undefined) settings.bankName = bankName;
     if (accountNumber !== undefined) settings.accountNumber = accountNumber;
     if (accountHolderName !== undefined) settings.accountHolderName = accountHolderName;

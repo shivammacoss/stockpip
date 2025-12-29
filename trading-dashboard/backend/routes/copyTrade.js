@@ -7,6 +7,7 @@ const CopyFollower = require('../models/CopyFollower');
 const CopyTradeMap = require('../models/CopyTradeMap');
 const CommissionLog = require('../models/CommissionLog');
 const User = require('../models/User');
+const TradingAccount = require('../models/TradingAccount');
 const { protect } = require('../middleware/auth');
 
 // All routes require authentication
@@ -115,6 +116,7 @@ router.get('/masters/:id', async (req, res) => {
 // @access  Private
 router.post('/follow/:masterId', [
   body('copyMode').isIn(['fixed_lot', 'multiplier', 'balance_ratio']),
+  body('tradingAccountId').notEmpty().withMessage('Trading account is required'),
   body('fixedLot').optional().isFloat({ min: 0.01 }),
   body('multiplier').optional().isFloat({ min: 0.1, max: 10 }),
   body('maxDailyLossPercent').optional().isFloat({ min: 1, max: 100 }),
@@ -136,6 +138,22 @@ router.post('/follow/:masterId', [
       return res.status(400).json({ success: false, message: 'Cannot follow yourself' });
     }
 
+    // Validate trading account belongs to user
+    const { tradingAccountId } = req.body;
+    console.log(`[CopyTrade] Looking for account: ${tradingAccountId}, user: ${req.user._id}`);
+    
+    const tradingAccount = await TradingAccount.findOne({ 
+      _id: tradingAccountId, 
+      user: req.user._id, 
+      status: 'active' 
+    });
+    
+    console.log(`[CopyTrade] Found account:`, tradingAccount ? { id: tradingAccount._id, balance: tradingAccount.balance, status: tradingAccount.status } : 'null');
+    
+    if (!tradingAccount) {
+      return res.status(400).json({ success: false, message: 'Invalid trading account selected' });
+    }
+
     // Check if already following
     const existingFollow = await CopyFollower.findOne({
       masterId: master._id,
@@ -151,11 +169,15 @@ router.post('/follow/:masterId', [
       return res.status(400).json({ success: false, message: 'Master has reached max followers' });
     }
 
-    // Check user balance meets minimum
-    if (req.user.balance < master.minCopyAmount) {
+    // Check selected trading account balance meets minimum (with small tolerance for floating point)
+    console.log(`[CopyTrade] Account balance: ${tradingAccount.balance}, Min required: ${master.minCopyAmount}`);
+    const accountBalance = parseFloat(tradingAccount.balance) || 0;
+    const minRequired = parseFloat(master.minCopyAmount) || 0;
+    
+    if (accountBalance < minRequired - 0.01) { // Small tolerance for floating point
       return res.status(400).json({
         success: false,
-        message: `Minimum balance of $${master.minCopyAmount} required`
+        message: `Minimum balance of $${minRequired.toFixed(2)} required. Your account balance: $${accountBalance.toFixed(2)}`
       });
     }
 
@@ -173,6 +195,7 @@ router.post('/follow/:masterId', [
     let follower;
     if (existingFollow) {
       existingFollow.status = 'active';
+      existingFollow.tradingAccountId = tradingAccountId;
       existingFollow.copyMode = copyMode;
       existingFollow.fixedLot = fixedLot;
       existingFollow.multiplier = multiplier;
@@ -189,6 +212,7 @@ router.post('/follow/:masterId', [
         masterId: master._id,
         masterUserId: master.userId,
         userId: req.user._id,
+        tradingAccountId,
         copyMode,
         fixedLot,
         multiplier,
@@ -475,29 +499,74 @@ router.get('/master/dashboard', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not a trade master' });
     }
 
-    // Get followers
+    // Get followers with their trade stats
     const followers = await CopyFollower.find({ masterId: master._id })
       .populate('userId', 'firstName lastName email avatar')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    // Get recent commissions
+    // Get follower trades and PnL for each follower
+    const followerIds = followers.map(f => f.userId?._id).filter(Boolean);
+    
+    // Get all copied trades for these followers from this master
+    const Trade = require('../models/Trade');
+    const followerTrades = await Trade.find({
+      user: { $in: followerIds },
+      isCopiedTrade: true,
+      masterTradeId: { $exists: true }
+    }).select('user profit status symbol amount closedAt').lean();
+
+    // Calculate per-follower stats
+    const followerStats = {};
+    for (const trade of followerTrades) {
+      const oderId = trade.user.toString();
+      if (!followerStats[oderId]) {
+        followerStats[oderId] = { totalTrades: 0, closedTrades: 0, totalPnL: 0, openTrades: 0 };
+      }
+      followerStats[oderId].totalTrades++;
+      if (trade.status === 'closed') {
+        followerStats[oderId].closedTrades++;
+        followerStats[oderId].totalPnL += trade.profit || 0;
+      } else {
+        followerStats[oderId].openTrades++;
+      }
+    }
+
+    // Attach stats to followers
+    const followersWithStats = followers.map(f => ({
+      ...f,
+      tradeStats: followerStats[f.userId?._id?.toString()] || { totalTrades: 0, closedTrades: 0, totalPnL: 0, openTrades: 0 }
+    }));
+
+    // Get recent commissions with trade details
     const recentCommissions = await CommissionLog.find({ masterId: master._id })
       .populate('followerUserId', 'firstName lastName')
+      .populate('tradeId', 'symbol amount profit')
       .sort({ createdAt: -1 })
-      .limit(20);
+      .limit(20)
+      .lean();
 
-    // Get recent trades
+    // Get recent trades with more details
     const recentTrades = await CopyTradeMap.find({ masterId: master._id })
+      .populate('followerTradeId', 'symbol amount profit status type price closePrice')
+      .populate('followerUserId', 'firstName lastName')
       .sort({ createdAt: -1 })
-      .limit(20);
+      .limit(20)
+      .lean();
 
     res.json({
       success: true,
       data: {
         profile: master,
-        followers,
+        followers: followersWithStats,
         recentCommissions,
-        recentTrades
+        recentTrades,
+        stats: {
+          totalFollowers: followers.length,
+          activeFollowers: followers.filter(f => f.isActive).length,
+          totalCommissionEarned: master.stats?.totalCommission || 0,
+          availableCommission: master.stats?.availableCommission || 0
+        }
       }
     });
   } catch (error) {

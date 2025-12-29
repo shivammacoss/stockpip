@@ -21,27 +21,47 @@ const getCopyTradeEngine = () => {
 };
 
 // @route   GET /api/trades
-// @desc    Get all trades for current user
+// @desc    Get all trades for current user (all account types combined)
 // @access  Private
 router.get('/', protect, async (req, res) => {
   try {
-    const { status, symbol, page = 1, limit = 20 } = req.query;
+    const { status, symbol, tradingAccountId, page = 1, limit = 50 } = req.query;
     
     const query = { user: req.user.id };
     if (status) query.status = status;
     if (symbol) query.symbol = symbol.toUpperCase();
+    if (tradingAccountId) query.tradingAccount = tradingAccountId;
 
     const trades = await Trade.find(query)
+      .populate('tradingAccount', 'accountNumber accountType')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
 
     const total = await Trade.countDocuments(query);
 
+    // Also get account type names for display
+    const TradingAccount = require('../models/TradingAccount');
+    const AccountType = require('../models/AccountType');
+    
+    // Enrich trades with account type info
+    const enrichedTrades = await Promise.all(trades.map(async (trade) => {
+      const tradeObj = trade.toObject();
+      if (trade.tradingAccount?.accountType) {
+        const accType = await AccountType.findById(trade.tradingAccount.accountType).select('name code color').lean();
+        tradeObj.accountTypeName = accType?.name || 'Standard';
+        tradeObj.accountTypeColor = accType?.color || '#3b82f6';
+      } else {
+        tradeObj.accountTypeName = 'Wallet';
+        tradeObj.accountTypeColor = '#6b7280';
+      }
+      return tradeObj;
+    }));
+
     res.json({
       success: true,
       data: {
-        trades,
+        trades: enrichedTrades,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -84,6 +104,170 @@ router.get('/price/:symbol', protect, async (req, res) => {
     res.json({ success: true, data: price });
   } catch (error) {
     console.error('Get price error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   GET /api/trades/price-with-spread/:symbol
+// @desc    Get price with spread calculated for user's account type
+// @access  Private
+router.get('/price-with-spread/:symbol', protect, async (req, res) => {
+  try {
+    const { tradingAccountId } = req.query;
+    const symbol = req.params.symbol.toUpperCase();
+    
+    const price = tradeEngine.getPrice(symbol);
+    if (!price) {
+      return res.status(404).json({ success: false, message: 'Symbol not found' });
+    }
+    
+    // Get account type spread and charges
+    const TradingAccount = require('../models/TradingAccount');
+    const AccountType = require('../models/AccountType');
+    const TradingCharge = require('../models/TradingCharge');
+    
+    let spreadPips = 0;
+    let commissionPerLot = 0;
+    let tradingFeePercent = 0;
+    let accountTypeName = 'Standard';
+    
+    // Get trading account and its type
+    if (tradingAccountId) {
+      const tradingAccount = await TradingAccount.findById(tradingAccountId).populate('accountType');
+      if (tradingAccount?.accountType) {
+        spreadPips = tradingAccount.accountType.spreadMarkup || 0;
+        commissionPerLot = tradingAccount.accountType.commission || 0;
+        tradingFeePercent = tradingAccount.accountType.tradingFee || 0;
+        accountTypeName = tradingAccount.accountType.name;
+      }
+    }
+    
+    // Also check TradingCharge settings (can override/add to account type)
+    try {
+      const charges = await TradingCharge.getChargesForTrade(symbol, req.user._id);
+      if (charges.spreadPips > spreadPips) spreadPips = charges.spreadPips;
+      if (charges.commissionPerLot > commissionPerLot) commissionPerLot = charges.commissionPerLot;
+      if (charges.feePercentage > tradingFeePercent) tradingFeePercent = charges.feePercentage;
+    } catch (e) {}
+    
+    // Calculate prices with spread
+    const pipSize = tradeEngine.getPipSize(symbol);
+    const spreadValue = spreadPips * pipSize;
+    
+    // Buy price = Ask + spread (worse for buyer)
+    // Sell price = Bid - spread (worse for seller)
+    const buyPrice = price.ask + spreadValue;
+    const sellPrice = price.bid - spreadValue;
+    
+    res.json({
+      success: true,
+      data: {
+        symbol,
+        // Raw prices (from market)
+        rawBid: price.bid,
+        rawAsk: price.ask,
+        // Prices with spread (what user actually gets)
+        buyPrice: parseFloat(buyPrice.toFixed(5)),
+        sellPrice: parseFloat(sellPrice.toFixed(5)),
+        // Spread info
+        spreadPips,
+        spreadValue: parseFloat(spreadValue.toFixed(5)),
+        // Charges info
+        commissionPerLot,
+        tradingFeePercent,
+        accountType: accountTypeName,
+        // For display
+        pipSize
+      }
+    });
+  } catch (error) {
+    console.error('Get price with spread error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   GET /api/trades/calculate-charges
+// @desc    Calculate charges for a trade before opening (SIMPLIFIED: only spread & commission)
+// @access  Private
+router.get('/calculate-charges', protect, async (req, res) => {
+  try {
+    const { symbol, amount, tradingAccountId, leverage: requestedLeverage } = req.query;
+    
+    if (!symbol || !amount) {
+      return res.status(400).json({ success: false, message: 'Symbol and amount required' });
+    }
+    
+    const price = tradeEngine.getPrice(symbol.toUpperCase());
+    if (!price) {
+      return res.status(404).json({ success: false, message: 'Symbol not found' });
+    }
+    
+    const TradingAccount = require('../models/TradingAccount');
+    const TradingCharge = require('../models/TradingCharge');
+    
+    let spreadPips = 0;
+    let commissionPerLot = 0;
+    let accountTypeName = 'Standard';
+    let maxLeverage = 100;
+    let accountTypeId = null;
+    
+    // Get trading account info
+    if (tradingAccountId) {
+      const tradingAccount = await TradingAccount.findById(tradingAccountId).populate('accountType');
+      if (tradingAccount) {
+        accountTypeName = tradingAccount.accountType?.name || 'Standard';
+        maxLeverage = tradingAccount.leverage || 1000;
+        accountTypeId = tradingAccount.accountType?._id;
+      }
+    }
+    
+    // Use requested leverage directly - user chooses their leverage
+    let leverage = requestedLeverage ? parseInt(requestedLeverage) : 100;
+    if (isNaN(leverage) || leverage < 1) leverage = 100;
+    if (leverage > 2000) leverage = 2000; // Max safety cap
+    
+    console.log(`[Calculate-Charges] Symbol: ${symbol}, Amount: ${amount}, Requested Leverage: ${requestedLeverage}, Parsed: ${leverage}`);
+    
+    // Get charges from TradingCharge settings (with accountTypeId for priority)
+    try {
+      const charges = await TradingCharge.getChargesForTrade(symbol.toUpperCase(), req.user._id, accountTypeId);
+      spreadPips = charges.spreadPips || 0;
+      commissionPerLot = charges.commissionPerLot || 0;
+    } catch (e) {}
+    
+    // Calculate (SIMPLIFIED: only commission, no percentage fee)
+    const lots = parseFloat(amount);
+    const contractSize = tradeEngine.getContractSize(symbol.toUpperCase());
+    const tradeValue = lots * price.ask * contractSize;
+    
+    const commission = lots * commissionPerLot;
+    const totalCharges = Math.round(commission * 100) / 100;
+    
+    const margin = tradeValue / leverage;
+    const totalRequired = margin + totalCharges;
+    
+    console.log(`[Calculate-Charges] TradeValue: ${tradeValue}, Leverage: ${leverage}, Margin: ${margin}`);
+    
+    res.json({
+      success: true,
+      data: {
+        symbol: symbol.toUpperCase(),
+        lots,
+        price: price.ask,
+        accountType: accountTypeName,
+        leverage,
+        // Breakdown (SIMPLIFIED: only spread & commission)
+        tradeValue: Math.round(tradeValue * 100) / 100,
+        margin: Math.round(margin * 100) / 100,
+        spreadPips,
+        commissionPerLot,
+        commission: Math.round(commission * 100) / 100,
+        totalCharges,
+        totalRequired: Math.round(totalRequired * 100) / 100
+      }
+    });
+  } catch (error) {
+    console.error('Calculate charges error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });

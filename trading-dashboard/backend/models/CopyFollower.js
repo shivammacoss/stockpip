@@ -17,6 +17,13 @@ const copyFollowerSchema = new mongoose.Schema({
     required: true
   },
   
+  // Trading Account to receive copy trades
+  tradingAccountId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'TradingAccount',
+    required: true
+  },
+  
   // Copy Settings
   copyMode: {
     type: String,

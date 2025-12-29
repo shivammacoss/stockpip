@@ -5,9 +5,51 @@ const Transaction = require('../models/Transaction');
 const UserBankAccount = require('../models/UserBankAccount');
 const BankSettings = require('../models/BankSettings');
 const User = require('../models/User');
+const Settings = require('../models/Settings');
 const { protect } = require('../middleware/auth');
 
-// All routes require authentication
+// @route   GET /api/wallet/currency-rates
+// @desc    Get public currency conversion rates (no auth required)
+// @access  Public
+router.get('/currency-rates', async (req, res) => {
+  try {
+    const depositRate = await Settings.getSetting('deposit_inr_to_usd_rate', 83);
+    const withdrawalRate = await Settings.getSetting('withdrawal_usd_to_inr_rate', 83);
+    const depositMarkup = await Settings.getSetting('deposit_currency_markup', 0);
+    const withdrawalMarkup = await Settings.getSetting('withdrawal_currency_markup', 0);
+    
+    res.json({
+      success: true,
+      data: {
+        // Effective rates for users (with markup applied)
+        depositRate: depositRate + depositMarkup, // User pays this INR per 1 USD
+        withdrawalRate: withdrawalRate - withdrawalMarkup, // User gets this INR per 1 USD
+        // Base rates
+        baseDepositRate: depositRate,
+        baseWithdrawalRate: withdrawalRate,
+        // Markups
+        depositMarkup,
+        withdrawalMarkup
+      }
+    });
+  } catch (error) {
+    console.error('Get currency rates error:', error);
+    // Return default rates on error
+    res.json({
+      success: true,
+      data: {
+        depositRate: 83,
+        withdrawalRate: 83,
+        baseDepositRate: 83,
+        baseWithdrawalRate: 83,
+        depositMarkup: 0,
+        withdrawalMarkup: 0
+      }
+    });
+  }
+});
+
+// All routes below require authentication
 router.use(protect);
 
 // @route   GET /api/wallet/bank-settings
@@ -19,6 +61,10 @@ router.get('/bank-settings', async (req, res) => {
     res.json({
       success: true,
       data: {
+        // Multiple accounts (new)
+        bankAccounts: settings.bankAccounts || [],
+        upiAccounts: settings.upiAccounts || [],
+        // Legacy single fields (for backward compatibility)
         bankName: settings.bankName,
         accountNumber: settings.accountNumber,
         accountHolderName: settings.accountHolderName,

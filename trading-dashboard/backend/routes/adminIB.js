@@ -4,6 +4,7 @@ const IB = require('../models/IB');
 const IBReferral = require('../models/IBReferral');
 const IBCommissionLog = require('../models/IBCommissionLog');
 const IBWithdrawal = require('../models/IBWithdrawal');
+const IBCommissionSettings = require('../models/IBCommissionSettings');
 const User = require('../models/User');
 const { protectAdmin } = require('./adminAuth');
 
@@ -64,8 +65,10 @@ router.get('/list', async (req, res) => {
 
     let ibs = await IB.find(query)
       .populate('userId', 'firstName lastName email')
+      .select('ibId userId status commissionLevel customCommission wallet stats upgradeRequest createdAt')
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .lean();
 
     // Filter by search if provided
     if (search) {
@@ -81,6 +84,81 @@ router.get('/list', async (req, res) => {
     res.json({ success: true, data: ibs });
   } catch (error) {
     console.error('Get IBs error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// =============== COMMISSION SETTINGS (must be before /:id routes) ===============
+
+// @route   GET /api/admin/ib/commission-settings
+// @desc    Get commission settings and levels
+// @access  Admin
+router.get('/commission-settings', async (req, res) => {
+  try {
+    const settings = await IBCommissionSettings.getSettings();
+    res.json({ success: true, data: settings });
+  } catch (error) {
+    console.error('Get commission settings error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   PUT /api/admin/ib/commission-settings
+// @desc    Update commission settings
+// @access  Admin
+router.put('/commission-settings', async (req, res) => {
+  try {
+    const settings = await IBCommissionSettings.getSettings();
+    const { defaultCommissionPerLot, levels, minWithdrawal, requireWithdrawalApproval } = req.body;
+
+    if (defaultCommissionPerLot !== undefined) settings.defaultCommissionPerLot = defaultCommissionPerLot;
+    if (levels !== undefined) settings.levels = levels;
+    if (minWithdrawal !== undefined) settings.minWithdrawal = minWithdrawal;
+    if (requireWithdrawalApproval !== undefined) settings.requireWithdrawalApproval = requireWithdrawalApproval;
+    
+    settings.updatedBy = req.admin._id;
+    await settings.save();
+
+    res.json({ success: true, message: 'Commission settings updated', data: settings });
+  } catch (error) {
+    console.error('Update commission settings error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   GET /api/admin/ib/upgrade-requests
+// @desc    Get pending upgrade requests
+// @access  Admin
+router.get('/upgrade-requests', async (req, res) => {
+  try {
+    // Parallel fetch for speed
+    const [ibs, settings] = await Promise.all([
+      IB.find({ 'upgradeRequest.pending': true })
+        .populate('userId', 'firstName lastName email')
+        .select('ibId userId commissionLevel customCommission upgradeRequest stats')
+        .sort({ 'upgradeRequest.requestedAt': -1 })
+        .lean(),
+      IBCommissionSettings.getSettings()
+    ]);
+    
+    const ibsWithLevelInfo = ibs.map((ib) => {
+      const currentLevel = settings.levels.find(l => l.level === ib.commissionLevel);
+      const requestedLevel = settings.levels.find(l => l.level === ib.upgradeRequest?.requestedLevel);
+      let effectiveCommission = currentLevel?.commissionPerLot || settings.defaultCommissionPerLot;
+      if (ib.customCommission?.enabled && ib.customCommission?.perLot > 0) {
+        effectiveCommission = ib.customCommission.perLot;
+      }
+      return {
+        ...ib,
+        currentLevelName: currentLevel?.name || 'Standard',
+        requestedLevelName: requestedLevel?.name || 'Unknown',
+        effectiveCommission
+      };
+    });
+
+    res.json({ success: true, data: ibsWithLevelInfo });
+  } catch (error) {
+    console.error('Get upgrade requests error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
@@ -136,9 +214,8 @@ router.put('/:id', async (req, res) => {
 
     const {
       status,
-      commissionType,
-      commissionValue,
-      firstDepositCommission,
+      commissionLevel,
+      customCommission,
       minWithdrawal,
       requireWithdrawalApproval,
       commissionFrozen,
@@ -146,22 +223,29 @@ router.put('/:id', async (req, res) => {
     } = req.body;
 
     if (status) ib.status = status;
-    if (commissionType) ib.commissionType = commissionType;
-    if (commissionValue !== undefined) ib.commissionValue = commissionValue;
-    if (firstDepositCommission) {
-      ib.firstDepositCommission = {
-        ...ib.firstDepositCommission,
-        ...firstDepositCommission
+    if (commissionLevel !== undefined) ib.commissionLevel = commissionLevel;
+    if (customCommission !== undefined) {
+      ib.customCommission = {
+        enabled: customCommission.enabled || false,
+        perLot: customCommission.perLot || 0
       };
     }
     if (minWithdrawal !== undefined) ib.minWithdrawal = minWithdrawal;
     if (requireWithdrawalApproval !== undefined) ib.requireWithdrawalApproval = requireWithdrawalApproval;
     if (commissionFrozen !== undefined) ib.commissionFrozen = commissionFrozen;
     if (adminNote !== undefined) ib.adminNote = adminNote;
+    
+    // Clear upgrade request if level changed
+    if (commissionLevel !== undefined && ib.upgradeRequest?.pending) {
+      ib.upgradeRequest.pending = false;
+    }
 
     await ib.save();
+    
+    // Get effective commission for response
+    const effectiveCommission = await ib.getEffectiveCommission();
 
-    res.json({ success: true, message: 'IB updated', data: ib });
+    res.json({ success: true, message: 'IB updated', data: { ...ib.toObject(), effectiveCommission } });
   } catch (error) {
     console.error('Update IB error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -405,6 +489,51 @@ router.put('/withdrawals/:id/reject', async (req, res) => {
     res.json({ success: true, message: 'Withdrawal rejected', data: withdrawal });
   } catch (error) {
     console.error('Reject withdrawal error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   PUT /api/admin/ib/:id/approve-upgrade
+// @desc    Approve IB upgrade request
+// @access  Admin
+router.put('/:id/approve-upgrade', async (req, res) => {
+  try {
+    const ib = await IB.findById(req.params.id);
+    if (!ib) {
+      return res.status(404).json({ success: false, message: 'IB not found' });
+    }
+
+    if (!ib.upgradeRequest?.pending) {
+      return res.status(400).json({ success: false, message: 'No pending upgrade request' });
+    }
+
+    ib.commissionLevel = ib.upgradeRequest.requestedLevel;
+    ib.upgradeRequest.pending = false;
+    await ib.save();
+
+    res.json({ success: true, message: 'Upgrade approved', data: ib });
+  } catch (error) {
+    console.error('Approve upgrade error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// @route   PUT /api/admin/ib/:id/reject-upgrade
+// @desc    Reject IB upgrade request
+// @access  Admin
+router.put('/:id/reject-upgrade', async (req, res) => {
+  try {
+    const ib = await IB.findById(req.params.id);
+    if (!ib) {
+      return res.status(404).json({ success: false, message: 'IB not found' });
+    }
+
+    ib.upgradeRequest.pending = false;
+    await ib.save();
+
+    res.json({ success: true, message: 'Upgrade rejected', data: ib });
+  } catch (error) {
+    console.error('Reject upgrade error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });

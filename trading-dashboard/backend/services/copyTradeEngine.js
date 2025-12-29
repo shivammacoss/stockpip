@@ -37,10 +37,9 @@ class CopyTradeEngine {
     return Math.round(lot * 100) / 100;
   }
 
-  // Check if follower has sufficient margin
-  async checkMargin(userId, symbol, lot, type, tradePrice) {
-    const user = await User.findById(userId);
-    if (!user) return { valid: false, reason: 'User not found' };
+  // Check if follower has sufficient margin (using trading account balance)
+  async checkMarginWithAccount(tradingAccount, symbol, lot, type, tradePrice) {
+    if (!tradingAccount) return { valid: false, reason: 'Trading account not found' };
 
     // Calculate proper margin based on symbol and leverage
     let contractSize = 100000;
@@ -50,7 +49,7 @@ class CopyTradeEngine {
     
     const price = tradePrice || 1;
     const requiredMargin = (price * contractSize * lot) / 100; // 1:100 leverage
-    const availableMargin = user.balance;
+    const availableMargin = tradingAccount.balance || 0;
 
     console.log(`[CopyEngine] Margin check: Required ${requiredMargin.toFixed(2)}, Available ${availableMargin.toFixed(2)}`);
 
@@ -85,11 +84,11 @@ class CopyTradeEngine {
 
       console.log(`[CopyEngine] Found TradeMaster: ${tradeMaster._id}, masterId: ${tradeMaster.masterId}`);
 
-      // Get all active followers
+      // Get all active followers with their trading accounts
       const followers = await CopyFollower.find({
         masterId: tradeMaster._id,
         status: 'active'
-      }).populate('userId');
+      }).populate('userId').populate('tradingAccountId');
 
       console.log(`[CopyEngine] Found ${followers.length} active followers for master ${tradeMaster._id}`);
 
@@ -123,12 +122,25 @@ class CopyTradeEngine {
             continue;
           }
 
-          // Get follower and master balances
+          // Get follower user and trading account
           const followerUser = follower.userId;
-          const followerBalance = followerUser?.balance || 0;
+          const followerAccount = follower.tradingAccountId;
+          
+          // Check if trading account exists and is active
+          if (!followerAccount || followerAccount.status !== 'active') {
+            console.log(`[CopyEngine] Follower ${follower._id} trading account not found or inactive`);
+            results.push({
+              followerId: follower._id,
+              success: false,
+              reason: 'Trading account not found or inactive'
+            });
+            continue;
+          }
+          
+          const followerBalance = followerAccount?.balance || 0;
           const masterBalance = masterUser.balance || 0;
 
-          console.log(`[CopyEngine] Follower balance: ${followerBalance}, Master balance: ${masterBalance}`);
+          console.log(`[CopyEngine] Follower account balance: ${followerBalance}, Master balance: ${masterBalance}`);
           console.log(`[CopyEngine] Copy mode: ${follower.copyMode}, Fixed lot: ${follower.fixedLot}`);
 
           // Calculate lot size
@@ -151,10 +163,10 @@ class CopyTradeEngine {
             continue;
           }
 
-          // Check margin with price
+          // Check margin with trading account
           const tradePrice = masterTrade.price || masterTrade.entryPrice;
-          const marginCheck = await this.checkMargin(
-            followerUser._id,
+          const marginCheck = await this.checkMarginWithAccount(
+            followerAccount,
             masterTrade.symbol,
             followerLot,
             masterTrade.type,
@@ -220,29 +232,30 @@ class CopyTradeEngine {
           console.log(`[CopyEngine] Margin: ${followerMargin.toFixed(2)}, Fee: ${fee.toFixed(2)}, Commission: ${commission.toFixed(2)}, Spread: ${spreadCost.toFixed(2)}`);
           console.log(`[CopyEngine] Total required: ${totalRequired.toFixed(2)}`);
 
-          // Check if follower has enough balance for total
-          if (followerUser.balance < totalRequired) {
-            console.log(`[CopyEngine] Insufficient balance after charges. Need: ${totalRequired.toFixed(2)}, Have: ${followerUser.balance.toFixed(2)}`);
+          // Check if trading account has enough balance for total
+          if (followerAccount.balance < totalRequired) {
+            console.log(`[CopyEngine] Insufficient account balance. Need: ${totalRequired.toFixed(2)}, Have: ${followerAccount.balance.toFixed(2)}`);
             results.push({
               followerId: follower._id,
               success: false,
-              reason: `Insufficient balance for charges. Need $${totalRequired.toFixed(2)}`
+              reason: `Insufficient account balance. Need $${totalRequired.toFixed(2)}`
             });
             follower.stats.failedCopies += 1;
             await follower.save();
             continue;
           }
 
-          // Deduct total from follower balance
-          const balanceBefore = followerUser.balance;
-          followerUser.balance -= totalRequired;
-          await followerUser.save();
+          // Deduct total from trading account balance
+          const balanceBefore = followerAccount.balance;
+          followerAccount.balance -= totalRequired;
+          await followerAccount.save();
           
-          console.log(`[CopyEngine] Follower balance: ${balanceBefore.toFixed(2)} -> ${followerUser.balance.toFixed(2)}`);
+          console.log(`[CopyEngine] Account balance: ${balanceBefore.toFixed(2)} -> ${followerAccount.balance.toFixed(2)}`);
 
-          // Create follower trade with all charges
+          // Create follower trade with trading account reference
           const followerTrade = await Trade.create({
             user: followerUser._id,
+            tradingAccountId: followerAccount._id,
             symbol: masterTrade.symbol,
             type: masterTrade.type,
             orderType: 'market',
@@ -260,7 +273,7 @@ class CopyTradeEngine {
             isCopiedTrade: true,
             masterTradeId: masterTrade._id,
             tradeSource: 'copied',
-            clientId: `CP${followerUser._id.toString().slice(-6)}`.toUpperCase()
+            clientId: `CP${followerAccount.accountNumber || followerUser._id.toString().slice(-6)}`.toUpperCase()
           });
           
           // Create transaction record for follower

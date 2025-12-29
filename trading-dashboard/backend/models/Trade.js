@@ -95,10 +95,22 @@ const tradeSchema = new mongoose.Schema({
   },
   closeReason: {
     type: String,
-    enum: ['manual', 'stop_loss', 'take_profit', 'stop_out', 'margin_call', 'master_closed', 'copied', null],
+    enum: ['manual', 'stop_loss', 'take_profit', 'stop_out', 'margin_call', 'master_closed', 'copied', 'admin_closed', 'admin_cancelled', null],
     default: null
   },
   profit: {
+    type: Number,
+    default: 0
+  },
+  rawProfit: {
+    type: Number,
+    default: 0
+  },
+  tradingCharge: {
+    type: Number,
+    default: 0
+  },
+  commission: {
     type: Number,
     default: 0
   },

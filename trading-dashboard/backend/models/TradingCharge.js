@@ -1,11 +1,18 @@
 const mongoose = require('mongoose');
 
 const tradingChargeSchema = new mongoose.Schema({
-  // Scope type: 'global', 'segment', 'symbol', 'user'
+  // Scope type: 'global', 'accountType', 'segment', 'symbol', 'user'
   scopeType: {
     type: String,
-    enum: ['global', 'segment', 'symbol', 'user'],
+    enum: ['global', 'accountType', 'segment', 'symbol', 'user'],
     required: true
+  },
+  
+  // For accountType scope: specific account type
+  accountTypeId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AccountType',
+    default: null
   },
   
   // For segment scope: 'forex', 'crypto', 'metals', 'indices'
@@ -29,7 +36,7 @@ const tradingChargeSchema = new mongoose.Schema({
     default: null
   },
 
-  // Charge settings
+  // SIMPLIFIED: Only Spread and Commission
   spreadPips: {
     type: Number,
     default: 0,
@@ -37,37 +44,6 @@ const tradingChargeSchema = new mongoose.Schema({
   },
   
   commissionPerLot: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  
-  swapLong: {
-    type: Number,
-    default: 0
-  },
-  
-  swapShort: {
-    type: Number,
-    default: 0
-  },
-  
-  // Fee as percentage of trade value
-  feePercentage: {
-    type: Number,
-    default: 0.1, // 0.1%
-    min: 0
-  },
-  
-  // Minimum fee in USD
-  minFee: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  
-  // Maximum fee in USD (0 = no limit)
-  maxFee: {
     type: Number,
     default: 0,
     min: 0
@@ -89,51 +65,50 @@ const tradingChargeSchema = new mongoose.Schema({
 });
 
 // Compound index for efficient lookups
-tradingChargeSchema.index({ scopeType: 1, segment: 1, symbol: 1, userId: 1 });
+tradingChargeSchema.index({ scopeType: 1, segment: 1, symbol: 1, userId: 1, accountTypeId: 1 });
 tradingChargeSchema.index({ symbol: 1 });
 tradingChargeSchema.index({ userId: 1 });
+tradingChargeSchema.index({ accountTypeId: 1 });
 
-// Static method to get charges for a trade
-tradingChargeSchema.statics.getChargesForTrade = async function(symbol, userId) {
+// Static method to get charges for a trade (with optional accountTypeId)
+tradingChargeSchema.statics.getChargesForTrade = async function(symbol, userId, accountTypeId = null) {
   const segment = getSegmentForSymbol(symbol);
   
-  // Priority: User > Symbol > Segment > Global
+  // Priority: User > Symbol > AccountType > Segment > Global
+  const queryConditions = [
+    { scopeType: 'user', userId: userId },
+    { scopeType: 'symbol', symbol: symbol.toUpperCase() },
+    { scopeType: 'segment', segment: segment },
+    { scopeType: 'global' }
+  ];
+  
+  // Add accountType condition if provided
+  if (accountTypeId) {
+    queryConditions.splice(2, 0, { scopeType: 'accountType', accountTypeId: accountTypeId });
+  }
+  
   const charges = await this.find({
     isActive: true,
-    $or: [
-      { scopeType: 'user', userId: userId },
-      { scopeType: 'symbol', symbol: symbol.toUpperCase() },
-      { scopeType: 'segment', segment: segment },
-      { scopeType: 'global' }
-    ]
-  }).sort({ scopeType: 1 }); // user first, then symbol, segment, global
+    $or: queryConditions
+  });
 
-  // Merge charges with priority
+  // Simplified: Only spread and commission
   let finalCharges = {
     spreadPips: 0,
     commissionPerLot: 0,
-    swapLong: 0,
-    swapShort: 0,
-    feePercentage: 0.1,
-    minFee: 0,
-    maxFee: 0,
     source: 'default'
   };
 
   // Apply in reverse priority (global first, then more specific)
+  // Priority: global(0) < segment(1) < accountType(2) < symbol(3) < user(4)
   const sortedCharges = charges.sort((a, b) => {
-    const priority = { global: 0, segment: 1, symbol: 2, user: 3 };
+    const priority = { global: 0, segment: 1, accountType: 2, symbol: 3, user: 4 };
     return priority[a.scopeType] - priority[b.scopeType];
   });
 
   for (const charge of sortedCharges) {
     if (charge.spreadPips > 0) finalCharges.spreadPips = charge.spreadPips;
     if (charge.commissionPerLot > 0) finalCharges.commissionPerLot = charge.commissionPerLot;
-    if (charge.swapLong !== 0) finalCharges.swapLong = charge.swapLong;
-    if (charge.swapShort !== 0) finalCharges.swapShort = charge.swapShort;
-    if (charge.feePercentage > 0) finalCharges.feePercentage = charge.feePercentage;
-    if (charge.minFee > 0) finalCharges.minFee = charge.minFee;
-    if (charge.maxFee > 0) finalCharges.maxFee = charge.maxFee;
     finalCharges.source = charge.scopeType;
   }
 

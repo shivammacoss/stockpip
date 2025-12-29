@@ -56,6 +56,12 @@ const ibCommissionLogSchema = new mongoose.Schema({
     required: true
   },
   
+  // Trading charge deducted from user (for reference)
+  tradingCharge: {
+    type: Number,
+    default: 0
+  },
+  
   // Status
   status: {
     type: String,

@@ -93,26 +93,31 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
   // Fetch charges breakdown when symbol/volume/leverage changes
   useEffect(() => {
     const fetchCharges = async () => {
-      if (!symbol || !volume || !selectedLeverage) return
+      if (!symbol || volume <= 0) return
+      const lev = selectedLeverage || 100
       try {
-        const params = new URLSearchParams({
-          symbol,
-          amount: volume.toString(),
-          leverage: selectedLeverage.toString(),
-          ...(tradingAccountId && { tradingAccountId }),
-          _t: Date.now().toString() // Cache bust
-        })
-        const res = await axios.get(`/api/trades/calculate-charges?${params}`, getAuthHeader())
+        const url = `/api/trades/calculate-charges?symbol=${symbol}&amount=${volume}&leverage=${lev}${tradingAccountId ? `&tradingAccountId=${tradingAccountId}` : ''}`
+        const res = await axios.get(url, getAuthHeader())
         if (res.data.success) {
           setChargesInfo(res.data.data)
         }
       } catch (err) {
-        console.error('[OrderPanel] Charges fetch error:', err)
+        console.error('[OrderPanel] Charges error:', err)
       }
     }
-    const timer = setTimeout(fetchCharges, 300) // Debounce
-    return () => clearTimeout(timer)
+    fetchCharges()
   }, [symbol, volume, selectedLeverage, tradingAccountId])
+  
+  // Calculate margin locally as fallback (when backend hasn't responded yet)
+  const calculateLocalMargin = () => {
+    const price = buyPrice || sellPrice
+    if (!price || !selectedLeverage) return 0
+    let contractSize = 100000
+    if (symbol.includes('XAU')) contractSize = 100
+    else if (symbol.includes('XAG')) contractSize = 5000
+    else if (symbol.includes('BTC') || symbol.includes('ETH')) contractSize = 1
+    return (price * contractSize * volume) / selectedLeverage
+  }
 
   // Fetch mock prices from backend
   useEffect(() => {
@@ -160,21 +165,12 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
 
   const pendingOrderTypes = ['BUY LIMIT', 'SELL LIMIT', 'BUY STOP', 'SELL STOP']
 
-  // Calculate margin required
-  const calculateMargin = () => {
-    const price = buyPrice || sellPrice
-    if (!price) return 0
-    let contractSize = 100000
-    if (symbol.includes('XAU')) contractSize = 100
-    else if (symbol.includes('XAG')) contractSize = 5000
-    else if (symbol.includes('BTC') || symbol.includes('ETH')) contractSize = 1
-    return (price * contractSize * volume) / selectedLeverage
-  }
-
-  const marginRequired = calculateMargin()
+  // Use backend margin if available, otherwise calculate locally
+  const marginRequired = chargesInfo?.margin || calculateLocalMargin()
   
-  // Get total required - use local margin with selected leverage + charges
+  // Get total required - backend or local calculation
   const getTotalRequired = () => {
+    if (chargesInfo?.totalRequired) return chargesInfo.totalRequired
     return marginRequired + (chargesInfo?.totalCharges || 0)
   }
 
@@ -536,7 +532,7 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
           </div>
         )}
 
-        {/* Margin Info - Always use local calculation with selected leverage */}
+        {/* Margin Info */}
         <div className="flex items-center justify-between text-sm mb-2">
           <span style={{ color: 'var(--text-secondary)' }}>Margin Required</span>
           <span style={{ color: 'var(--text-primary)' }}>${marginRequired.toFixed(2)}</span>
@@ -548,7 +544,7 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
         <div className="flex items-center justify-between text-sm mb-4 pt-2 border-t" style={{ borderColor: 'var(--border-color)' }}>
           <span className="font-medium" style={{ color: 'var(--text-primary)' }}>Total Required</span>
           <span className="font-semibold" style={{ color: 'var(--accent-green)' }}>
-            ${(marginRequired + (chargesInfo?.totalCharges || 0)).toFixed(2)}
+            ${getTotalRequired().toFixed(2)}
           </span>
         </div>
         <div className="flex items-center justify-between text-xs mb-4">
@@ -556,9 +552,9 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
           <span style={{ color: 'var(--text-secondary)' }}>${marginFree.toLocaleString()}</span>
         </div>
 
-        {(marginRequired + (chargesInfo?.totalCharges || 0)) > marginFree && (
+        {getTotalRequired() > marginFree && (
           <div className="text-xs text-red-500 mb-4 p-2 rounded-lg bg-red-500/10">
-            ⚠️ Insufficient balance. Required: ${(marginRequired + (chargesInfo?.totalCharges || 0)).toFixed(2)}
+            ⚠️ Insufficient balance. Required: ${getTotalRequired().toFixed(2)}
           </div>
         )}
       </div>

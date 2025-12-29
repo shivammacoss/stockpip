@@ -202,27 +202,32 @@ class TradeEngine {
     
     console.log(`[TradeEngine] Leverage: requested=${requestedLeverage}, using=${tradeLeverage}`);
     
-    // Available margin = balance * leverage
-    const availableMargin = availableBalance * tradeLeverage;
+    // TRADING POWER = balance × leverage (this is max position value user can control)
+    const tradingPower = availableBalance * tradeLeverage;
     
-    // Calculate margin required (using trade-specific leverage)
-    const margin = this.calculateMargin(symbol, amount, executionPrice, tradeLeverage);
+    // Position value = lots × price × contract size
+    const contractSize = this.getContractSize(symbol);
+    const positionValue = amount * executionPrice * contractSize;
+    
+    // Margin required = position value / leverage
+    const margin = positionValue / tradeLeverage;
     
     // SIMPLIFIED: Only commission per lot (no percentage fees)
-    // Commission from TradingCharge settings
     const commissionPerLot = charges.commissionPerLot || 0;
     const commission = amount * commissionPerLot; // lots × $/lot
-    
-    // Total trading charge = commission only
     const tradingCharge = Math.round(commission * 100) / 100;
     
     // Spread cost for reference (spread is applied to execution price, not deducted separately)
     const spreadCost = this.calculateSpreadCost(symbol, amount, charges.spreadPips);
     
-    // Total required = margin + trading charges (deducted immediately on open)
+    // Check if position value is within trading power
+    // User needs: margin + charges to open the trade
     const totalRequired = margin + tradingCharge;
     
-    // Check if user has enough balance for this trade
+    console.log(`[TradeEngine] Balance: $${availableBalance}, Leverage: ${tradeLeverage}x, Trading Power: $${tradingPower.toFixed(2)}`);
+    console.log(`[TradeEngine] Position Value: $${positionValue.toFixed(2)}, Margin Required: $${margin.toFixed(2)}, Charges: $${tradingCharge.toFixed(2)}`);
+    
+    // User can trade if they have enough balance to cover margin + charges
     if (availableBalance < totalRequired) {
       throw new Error(`Insufficient balance. Required: $${totalRequired.toFixed(2)}, Available: $${availableBalance.toFixed(2)}`);
     }

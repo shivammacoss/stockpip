@@ -37,7 +37,42 @@ const MobileOrder = ({ symbol }) => {
     return () => clearInterval(interval)
   }, [symbol])
 
+  // Check if trading is locked (kill switch)
+  const isTradingLocked = () => {
+    const savedLockEnd = localStorage.getItem('tradingLockEnd')
+    if (savedLockEnd) {
+      const endTime = new Date(savedLockEnd)
+      if (endTime > new Date()) return true
+      else localStorage.removeItem('tradingLockEnd')
+    }
+    return false
+  }
+
+  // Get decimals based on symbol (matching instrument settings)
+  const getDecimals = (sym) => {
+    if (!sym) return 5
+    if (sym.includes('JPY')) return 3
+    if (sym.includes('BTC')) return 2
+    if (sym.includes('ETH')) return 2
+    if (sym.includes('XAU')) return 2
+    if (sym.includes('XAG')) return 3
+    if (sym.includes('US30') || sym.includes('US500') || sym.includes('US100') || sym.includes('DE30') || sym.includes('UK100')) return 1
+    if (sym.includes('JP225')) return 0
+    if (sym.includes('OIL')) return 2
+    if (sym.includes('XNG')) return 3
+    if (sym.includes('LTC') || sym.includes('XRP') || sym.includes('DOGE') || sym.includes('SOL')) return 4
+    return 5
+  }
+
+  const decimals = getDecimals(symbol)
+
   const handleOpenOrder = async () => {
+    // Check kill switch
+    if (isTradingLocked()) {
+      alert('Trading is currently locked. Kill switch is active.')
+      return
+    }
+    
     const token = localStorage.getItem('token')
     if (!token) return alert('Please login')
     
@@ -122,7 +157,7 @@ const MobileOrder = ({ symbol }) => {
         >
           <p className="text-xs mb-1" style={{ color: '#9ca3af' }}>Sell</p>
           <p className="text-lg font-bold" style={{ color: '#ef4444' }}>
-            {prices.bid?.toFixed(symbol.includes('JPY') ? 3 : 5) || '-.--'}
+            {prices.bid?.toFixed(decimals) || '-.--'}
           </p>
         </button>
         <button
@@ -135,7 +170,7 @@ const MobileOrder = ({ symbol }) => {
         >
           <p className="text-xs mb-1" style={{ color: '#9ca3af' }}>Buy</p>
           <p className="text-lg font-bold" style={{ color: '#22c55e' }}>
-            {prices.ask?.toFixed(symbol.includes('JPY') ? 3 : 5) || '-.--'}
+            {prices.ask?.toFixed(decimals) || '-.--'}
           </p>
         </button>
       </div>
@@ -259,7 +294,7 @@ const MobileOrder = ({ symbol }) => {
       <div className="mt-3 text-center">
         <p className="text-xs" style={{ color: '#6b7280' }}>
           {orderType === 'market' ? 'Market' : 'Pending'} • {volume} lots @ {orderType === 'market' 
-            ? executionPrice?.toFixed(symbol.includes('JPY') ? 3 : 5) 
+            ? executionPrice?.toFixed(decimals) 
             : pendingPrice || '-.--'}
         </p>
       </div>

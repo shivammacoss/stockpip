@@ -20,6 +20,8 @@ import axios from 'axios'
 const Orders = () => {
   const [activeTab, setActiveTab] = useState('open')
   const [trades, setTrades] = useState([])
+  const [tradingAccounts, setTradingAccounts] = useState([])
+  const [selectedAccountId, setSelectedAccountId] = useState('all')
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [dateFrom, setDateFrom] = useState('')
@@ -31,30 +33,44 @@ const Orders = () => {
   })
 
   useEffect(() => {
-    fetchTrades()
-    // Auto-refresh every 3 seconds
-    const interval = setInterval(fetchTrades, 3000)
+    fetchData(true)
+    // Auto-refresh every 5 seconds (silently)
+    const interval = setInterval(() => fetchData(false), 5000)
     return () => clearInterval(interval)
   }, [activeTab])
 
-  const fetchTrades = async () => {
+  const fetchData = async (showLoading = false) => {
     try {
-      setLoading(true)
-      const res = await axios.get('/api/trades?limit=100', getAuthHeader())
-      if (res.data.success) {
-        // Handle both response formats
-        const tradesData = res.data.data?.trades || res.data.data || []
+      if (showLoading) setLoading(true)
+      
+      // Fetch trades and trading accounts in parallel
+      const [tradesRes, accountsRes] = await Promise.all([
+        axios.get('/api/trades?limit=200&allAccounts=true', getAuthHeader()),
+        axios.get('/api/trading-accounts', getAuthHeader())
+      ])
+      
+      if (tradesRes.data.success) {
+        const tradesData = tradesRes.data.data?.trades || tradesRes.data.data || []
         setTrades(tradesData)
       }
+      
+      if (accountsRes.data.success) {
+        setTradingAccounts(accountsRes.data.data || [])
+      }
     } catch (err) {
-      console.error('Failed to fetch trades:', err)
+      console.error('Failed to fetch data:', err)
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }
 
   const getFilteredTrades = () => {
     let filtered = trades
+
+    // Filter by trading account
+    if (selectedAccountId !== 'all') {
+      filtered = filtered.filter(t => t.tradingAccountId === selectedAccountId || t.tradingAccountId?._id === selectedAccountId)
+    }
 
     // Filter by tab
     if (activeTab === 'open') {
@@ -82,6 +98,13 @@ const Orders = () => {
     }
 
     return filtered
+  }
+
+  // Helper to get account number from trade
+  const getAccountNumber = (trade) => {
+    if (trade.tradingAccountId?.accountNumber) return trade.tradingAccountId.accountNumber
+    const account = tradingAccounts.find(a => a._id === trade.tradingAccountId)
+    return account?.accountNumber || 'N/A'
   }
 
   const downloadStatement = (format) => {
@@ -138,7 +161,7 @@ const Orders = () => {
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Orders & History</h1>
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Manage your trades and download statements</p>
         </div>
-        <button onClick={fetchTrades} className="p-2 rounded-xl" style={{ backgroundColor: 'var(--bg-card)' }}>
+        <button onClick={() => fetchData(true)} className="p-2 rounded-xl" style={{ backgroundColor: 'var(--bg-card)' }}>
           <RefreshCw size={20} style={{ color: 'var(--text-secondary)' }} />
         </button>
       </div>
@@ -224,6 +247,21 @@ const Orders = () => {
 
       {/* Filters */}
       <div className="flex items-center gap-4 mb-4">
+        {/* Account Filter */}
+        <select
+          value={selectedAccountId}
+          onChange={(e) => setSelectedAccountId(e.target.value)}
+          className="px-4 py-2.5 rounded-xl text-sm"
+          style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+        >
+          <option value="all">All Accounts</option>
+          {tradingAccounts.map(acc => (
+            <option key={acc._id} value={acc._id}>
+              {acc.accountNumber} {acc.isDemo ? '(Demo)' : '(Live)'}
+            </option>
+          ))}
+        </select>
+
         <div className="relative flex-1 max-w-xs">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
           <input
@@ -268,6 +306,7 @@ const Orders = () => {
               <thead>
                 <tr style={{ backgroundColor: 'var(--bg-hover)' }}>
                   <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Date/Time</th>
+                  <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Account</th>
                   <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Symbol</th>
                   <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Type</th>
                   <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Side</th>
@@ -283,6 +322,14 @@ const Orders = () => {
                   <tr key={trade._id} style={{ borderBottom: '1px solid var(--border-color)' }}>
                     <td className="py-4 px-4 text-sm" style={{ color: 'var(--text-secondary)' }}>
                       {new Date(trade.createdAt).toLocaleString()}
+                    </td>
+                    <td className="py-4 px-4">
+                      <span className="text-xs px-2 py-1 rounded-lg" style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)' }}>
+                        {getAccountNumber(trade)}
+                      </span>
+                      {trade.isCopiedTrade && (
+                        <span className="ml-1 text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">Copy</span>
+                      )}
                     </td>
                     <td className="py-4 px-4">
                       <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{trade.symbol}</span>

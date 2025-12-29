@@ -3,9 +3,9 @@ import { ArrowDownCircle, ArrowUpCircle, Clock, Loader2, X, Building2, Smartphon
 import axios from 'axios'
 import { useTheme } from '../../context/ThemeContext'
 
-// Same exchange rates as web version
-const EXCHANGE_RATES = {
-  USD: 1, INR: 83.50, EUR: 0.92, GBP: 0.79, AUD: 1.53,
+// Default exchange rates (will be fetched from API)
+const DEFAULT_EXCHANGE_RATES = {
+  USD: 1, INR: 83, EUR: 0.92, GBP: 0.79, AUD: 1.53,
   CAD: 1.36, JPY: 149.50, SGD: 1.34, AED: 3.67, CNY: 7.24
 }
 
@@ -30,6 +30,7 @@ const MobileWallet = () => {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [copied, setCopied] = useState('')
+  const [exchangeRates, setExchangeRates] = useState(DEFAULT_EXCHANGE_RATES)
 
   // Deposit form - same as web
   const [depositAmount, setDepositAmount] = useState('')
@@ -54,7 +55,7 @@ const MobileWallet = () => {
 
   const getUSDAmount = (amount, currency) => {
     if (!amount || isNaN(amount)) return 0
-    return parseFloat(amount) / (EXCHANGE_RATES[currency] || 1)
+    return parseFloat(amount) / (exchangeRates[currency] || 1)
   }
 
   const usdEquivalent = getUSDAmount(depositAmount, depositCurrency)
@@ -66,17 +67,21 @@ const MobileWallet = () => {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [balanceRes, settingsRes, accountsRes, transRes] = await Promise.all([
+      const [balanceRes, settingsRes, accountsRes, transRes, ratesRes] = await Promise.all([
         axios.get('/api/wallet/balance', getAuthHeader()),
         axios.get('/api/wallet/bank-settings', getAuthHeader()),
         axios.get('/api/wallet/bank-accounts', getAuthHeader()),
-        axios.get('/api/wallet/transactions?limit=20', getAuthHeader())
+        axios.get('/api/wallet/transactions?limit=20', getAuthHeader()),
+        axios.get('/api/wallet/currency-rates') // Public endpoint
       ])
 
       if (balanceRes.data.success) setBalance(balanceRes.data.data.balance)
       if (settingsRes.data.success) setBankSettings(settingsRes.data.data)
       if (accountsRes.data.success) setUserBankAccounts(accountsRes.data.data || [])
       if (transRes.data.success) setTransactions(transRes.data.data || [])
+      if (ratesRes.data.success) {
+        setExchangeRates(prev => ({ ...prev, INR: ratesRes.data.data.depositRate || 83 }))
+      }
     } catch (err) {
       console.error('Failed to fetch wallet data:', err)
     } finally {
@@ -107,7 +112,7 @@ const MobileWallet = () => {
         amount: usdEquivalent,
         originalAmount: parseFloat(depositAmount),
         originalCurrency: depositCurrency,
-        exchangeRate: EXCHANGE_RATES[depositCurrency],
+        exchangeRate: exchangeRates[depositCurrency],
         paymentMethod, utrNumber, transactionId, screenshot
       }, getAuthHeader())
 
@@ -290,10 +295,10 @@ const MobileWallet = () => {
               </button>
               {showCurrencyDropdown && (
                 <div className="mt-2 rounded-lg max-h-48 overflow-y-auto" style={{ backgroundColor: bgInput, border: `1px solid ${borderColor}` }}>
-                  {Object.keys(EXCHANGE_RATES).map(cur => (
+                  {Object.keys(exchangeRates).map(cur => (
                     <button key={cur} onClick={() => { setDepositCurrency(cur); setShowCurrencyDropdown(false); }} className="w-full flex justify-between p-3 text-sm" style={{ color: depositCurrency === cur ? '#22c55e' : textPrimary }}>
                       <span>{cur} ({CURRENCY_SYMBOLS[cur]})</span>
-                      <span style={{ color: textSecondary }}>1 USD = {EXCHANGE_RATES[cur]}</span>
+                      <span style={{ color: textSecondary }}>1 USD = {exchangeRates[cur]}</span>
                     </button>
                   ))}
                 </div>

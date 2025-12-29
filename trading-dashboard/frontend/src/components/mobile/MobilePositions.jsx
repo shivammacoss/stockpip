@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Loader2, X, TrendingUp, TrendingDown, Edit2 } from 'lucide-react'
 import axios from 'axios'
+import { io } from 'socket.io-client'
 import { useTheme } from '../../context/ThemeContext'
 
 const MobilePositions = () => {
@@ -12,7 +13,7 @@ const MobilePositions = () => {
   const textPrimary = isDark ? '#fff' : '#000'
   const textSecondary = isDark ? 'gray-500' : '#8e8e93'
 
-  // Get decimals based on symbol
+  // Get decimals based on symbol (matching instrument settings)
   const getDecimals = (symbol) => {
     if (!symbol) return 5
     if (symbol.includes('JPY')) return 3
@@ -20,13 +21,17 @@ const MobilePositions = () => {
     if (symbol.includes('ETH')) return 2
     if (symbol.includes('XAU')) return 2
     if (symbol.includes('XAG')) return 3
+    if (symbol.includes('US30') || symbol.includes('US500') || symbol.includes('US100') || symbol.includes('DE30') || symbol.includes('UK100')) return 1
+    if (symbol.includes('JP225')) return 0
+    if (symbol.includes('OIL')) return 2
+    if (symbol.includes('XNG')) return 3
     if (symbol.includes('LTC') || symbol.includes('XRP') || symbol.includes('DOGE') || symbol.includes('SOL')) return 4
     return 5
   }
 
   const formatPrice = (price, symbol) => {
     if (!price) return '---'
-    return price.toFixed(getDecimals(symbol))
+    return parseFloat(price.toFixed(getDecimals(symbol))).toString()
   }
   const [activeTab, setActiveTab] = useState('positions')
   const [trades, setTrades] = useState([])
@@ -50,7 +55,46 @@ const MobilePositions = () => {
     fetchPrices()
     fetchAccountStats()
     
-    // Auto-refresh trades every 2 seconds
+    // Set up socket for instant trade updates
+    const token = localStorage.getItem('token')
+    let socket = null
+    
+    if (token) {
+      socket = io('http://localhost:5001', { auth: { token } })
+      
+      socket.on('connect', () => {
+        console.log('[MobilePositions] Socket connected')
+      })
+      
+      // Instant copy trade updates
+      socket.on('trade_copied', (data) => {
+        console.log('[MobilePositions] Copy trade received:', data)
+        fetchTrades()
+        fetchAccountStats()
+      })
+      socket.on('trade_modified', (data) => {
+        console.log('[MobilePositions] Trade modified:', data)
+        fetchTrades()
+      })
+      socket.on('trade_closed', (data) => {
+        console.log('[MobilePositions] Trade closed:', data)
+        fetchTrades()
+        fetchAccountStats()
+      })
+      socket.on('balanceUpdate', () => {
+        fetchAccountStats()
+      })
+      socket.on('orderPlaced', () => {
+        fetchTrades()
+        fetchAccountStats()
+      })
+      socket.on('tradeClosed', () => {
+        fetchTrades()
+        fetchAccountStats()
+      })
+    }
+    
+    // Auto-refresh trades every 2 seconds (backup polling)
     const tradeInterval = setInterval(fetchTrades, 2000)
     // Auto-refresh prices every 1 second for live P&L
     const priceInterval = setInterval(fetchPrices, 1000)
@@ -66,6 +110,7 @@ const MobilePositions = () => {
     window.addEventListener('tradeClosed', handleTradeEvent)
     
     return () => {
+      if (socket) socket.disconnect()
       clearInterval(tradeInterval)
       clearInterval(priceInterval)
       clearInterval(statsInterval)

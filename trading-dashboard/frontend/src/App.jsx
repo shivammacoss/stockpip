@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { Home, LayoutGrid, X, Wallet as WalletIcon, ArrowRightLeft } from 'lucide-react'
+import { Home, LayoutGrid, X, Wallet as WalletIcon, ArrowRightLeft, ShieldOff, Clock } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import Header from './components/Header'
 import InstrumentsPanel from './components/InstrumentsPanel'
@@ -51,6 +51,28 @@ function App({ initialView = 'home' }) {
   const [orderType, setOrderType] = useState('market')
   const [quickLots, setQuickLots] = useState(0.01)
   const [livePrices, setLivePrices] = useState({ bid: 0, ask: 0 })
+  const [showKillSwitch, setShowKillSwitch] = useState(false)
+  const [killDuration, setKillDuration] = useState('1')
+  const [killUnit, setKillUnit] = useState('hours')
+  const [tradingLocked, setTradingLocked] = useState(false)
+  const [lockEndTime, setLockEndTime] = useState(null)
+  const [timeRemaining, setTimeRemaining] = useState('')
+
+  // Get decimals based on symbol (matching instrument settings)
+  const getDecimals = (sym) => {
+    if (!sym) return 5
+    if (sym.includes('JPY')) return 3
+    if (sym.includes('BTC')) return 2
+    if (sym.includes('ETH')) return 2
+    if (sym.includes('XAU')) return 2
+    if (sym.includes('XAG')) return 3
+    if (sym.includes('US30') || sym.includes('US500') || sym.includes('US100') || sym.includes('DE30') || sym.includes('UK100')) return 1
+    if (sym.includes('JP225')) return 0
+    if (sym.includes('OIL')) return 2
+    if (sym.includes('XNG')) return 3
+    if (sym.includes('LTC') || sym.includes('XRP') || sym.includes('DOGE') || sym.includes('SOL')) return 4
+    return 5
+  }
   const [positionsHeight, setPositionsHeight] = useState(180)
   const [isResizing, setIsResizing] = useState(false)
   // Technical Analysis removed
@@ -127,6 +149,72 @@ function App({ initialView = 'home' }) {
   useEffect(() => {
     localStorage.setItem('selectedSymbol', selectedSymbol)
   }, [selectedSymbol])
+
+  // Check for existing kill switch lock
+  useEffect(() => {
+    const savedLockEnd = localStorage.getItem('tradingLockEnd')
+    if (savedLockEnd) {
+      const endTime = new Date(savedLockEnd)
+      if (endTime > new Date()) {
+        setTradingLocked(true)
+        setLockEndTime(endTime)
+      } else {
+        localStorage.removeItem('tradingLockEnd')
+      }
+    }
+  }, [])
+
+  // Update time remaining countdown
+  useEffect(() => {
+    if (!tradingLocked || !lockEndTime) return
+
+    const updateTimer = () => {
+      const now = new Date()
+      const diff = lockEndTime - now
+
+      if (diff <= 0) {
+        setTradingLocked(false)
+        setLockEndTime(null)
+        localStorage.removeItem('tradingLockEnd')
+        setTimeRemaining('')
+        return
+      }
+
+      const hours = Math.floor(diff / (1000 * 60 * 60))
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+      setTimeRemaining(`${hours}h ${minutes}m ${seconds}s`)
+    }
+
+    updateTimer()
+    const interval = setInterval(updateTimer, 1000)
+    return () => clearInterval(interval)
+  }, [tradingLocked, lockEndTime])
+
+  const activateKillSwitch = () => {
+    const duration = parseInt(killDuration)
+    let milliseconds = 0
+    
+    switch (killUnit) {
+      case 'minutes':
+        milliseconds = duration * 60 * 1000
+        break
+      case 'hours':
+        milliseconds = duration * 60 * 60 * 1000
+        break
+      case 'days':
+        milliseconds = duration * 24 * 60 * 60 * 1000
+        break
+      default:
+        milliseconds = duration * 60 * 60 * 1000
+    }
+
+    const endTime = new Date(Date.now() + milliseconds)
+    localStorage.setItem('tradingLockEnd', endTime.toISOString())
+    setLockEndTime(endTime)
+    setTradingLocked(true)
+    setShowKillSwitch(false)
+  }
 
   // Fetch live prices from backend API (same source as InstrumentsPanel)
   useEffect(() => {
@@ -380,31 +468,38 @@ function App({ initialView = 'home' }) {
               {/* Bid/Ask Display */}
               <div className="flex items-center gap-2 text-sm mr-2">
                 <span className="px-2 py-1 rounded font-mono font-semibold" style={{ backgroundColor: '#ef444420', color: '#ef4444' }}>
-                  {livePrices.bid.toFixed(selectedSymbol.includes('JPY') ? 3 : selectedSymbol.includes('XAU') ? 2 : selectedSymbol.includes('BTC') ? 0 : 5)}
+                  {livePrices.bid.toFixed(getDecimals(selectedSymbol))}
                 </span>
                 <span className="px-2 py-1 rounded font-mono font-semibold" style={{ backgroundColor: '#3b82f620', color: '#3b82f6' }}>
-                  {livePrices.ask.toFixed(selectedSymbol.includes('JPY') ? 3 : selectedSymbol.includes('XAU') ? 2 : selectedSymbol.includes('BTC') ? 0 : 5)}
+                  {livePrices.ask.toFixed(getDecimals(selectedSymbol))}
                 </span>
               </div>
               
               {/* New Order Button */}
               <button
-                onClick={() => setShowOrderPanel(!showOrderPanel)}
-                className="px-4 py-1.5 rounded text-sm font-semibold transition-colors"
-                style={{ backgroundColor: '#3b82f6', color: 'white' }}
+                onClick={() => !tradingLocked && setShowOrderPanel(!showOrderPanel)}
+                disabled={tradingLocked}
+                className="px-4 py-1.5 rounded text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: tradingLocked ? '#4b5563' : '#3b82f6', color: 'white' }}
               >
-                New Order
+                {tradingLocked ? 'Locked' : 'New Order'}
               </button>
               
-              <span 
-                className="px-2 py-0.5 rounded text-xs font-medium ml-2"
-                style={{ 
-                  backgroundColor: activeTradingAccount?.isDemo ? 'var(--bg-hover)' : '#22c55e20', 
-                  color: activeTradingAccount?.isDemo ? 'var(--text-muted)' : '#22c55e' 
-                }}
-              >
-                {activeTradingAccount?.isDemo ? 'Demo' : 'Live'}
-              </span>
+              {/* Kill Switch Button */}
+              {tradingLocked ? (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/20 border border-red-500/30">
+                  <ShieldOff size={16} className="text-red-400" />
+                  <span className="text-xs font-medium text-red-400">{timeRemaining}</span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowKillSwitch(true)}
+                  className="p-2 rounded-lg hover:bg-orange-500/20 transition-colors"
+                  title="Kill Switch - Lock Trading"
+                >
+                  <ShieldOff size={18} className="text-orange-500" />
+                </button>
+              )}
             </div>
           </div>
           
@@ -476,7 +571,7 @@ function App({ initialView = 'home' }) {
               
               const handleMouseMove = (moveEvent) => {
                 const delta = startY - moveEvent.clientY
-                setPositionsHeight(Math.max(60, Math.min(500, startHeight + delta)))
+                setPositionsHeight(Math.max(80, Math.min(800, startHeight + delta)))
               }
               
               const handleMouseUp = () => {
@@ -540,6 +635,82 @@ function App({ initialView = 'home' }) {
               setOrderType={setOrderType}
               onClose={() => setShowOrderPanel(false)}
             />
+          </div>
+        )}
+
+        {/* Kill Switch Modal */}
+        {showKillSwitch && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div 
+              className="w-full max-w-md rounded-2xl p-6 mx-4"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                    <ShieldOff size={24} className="text-orange-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Kill Switch</h3>
+                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Trading discipline control</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowKillSwitch(false)} className="p-2 hover:bg-gray-700/50 rounded-lg">
+                  <X size={20} style={{ color: 'var(--text-secondary)' }} />
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl mb-6" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
+                  🛡️ <strong>Emotional Trading Control</strong><br/>
+                  Lock yourself out of trading for a set period to maintain discipline and avoid emotional decisions.
+                </p>
+                <p className="text-xs text-orange-400">
+                  ⚠️ This cannot be undone once activated. You will not be able to place any trades until the timer expires.
+                </p>
+              </div>
+
+              <div className="mb-6">
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Lock Duration</label>
+                <div className="flex gap-3">
+                  <input
+                    type="number"
+                    min="1"
+                    max="999"
+                    value={killDuration}
+                    onChange={(e) => setKillDuration(e.target.value)}
+                    className="flex-1 px-4 py-3 rounded-xl text-center text-lg font-bold"
+                    style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                  />
+                  <select
+                    value={killUnit}
+                    onChange={(e) => setKillUnit(e.target.value)}
+                    className="px-4 py-3 rounded-xl"
+                    style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                  >
+                    <option value="minutes">Minutes</option>
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowKillSwitch(false)}
+                  className="flex-1 py-3 rounded-xl font-medium transition-colors"
+                  style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={activateKillSwitch}
+                  className="flex-1 py-3 rounded-xl font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+                >
+                  Activate Kill Switch
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -620,6 +791,82 @@ function App({ initialView = 'home' }) {
       </div>
       
       {/* Bottom Status Bar - Only show in Trade Room (chart view) */}
+
+      {/* Kill Switch Modal */}
+      {showKillSwitch && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+          <div 
+            className="w-full max-w-md rounded-2xl p-6 mx-4"
+            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                  <ShieldOff size={24} className="text-orange-500" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Kill Switch</h3>
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Trading discipline control</p>
+                </div>
+              </div>
+              <button onClick={() => setShowKillSwitch(false)} className="p-2 hover:bg-gray-700/50 rounded-lg">
+                <X size={20} style={{ color: 'var(--text-secondary)' }} />
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl mb-6" style={{ backgroundColor: 'var(--bg-hover)' }}>
+              <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
+                🛡️ <strong>Emotional Trading Control</strong><br/>
+                Lock yourself out of trading for a set period to maintain discipline and avoid emotional decisions.
+              </p>
+              <p className="text-xs text-orange-400">
+                ⚠️ This cannot be undone once activated. You will not be able to place any trades until the timer expires.
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Lock Duration</label>
+              <div className="flex gap-3">
+                <input
+                  type="number"
+                  min="1"
+                  max="999"
+                  value={killDuration}
+                  onChange={(e) => setKillDuration(e.target.value)}
+                  className="flex-1 px-4 py-3 rounded-xl text-center text-lg font-bold"
+                  style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                />
+                <select
+                  value={killUnit}
+                  onChange={(e) => setKillUnit(e.target.value)}
+                  className="px-4 py-3 rounded-xl"
+                  style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                >
+                  <option value="minutes">Minutes</option>
+                  <option value="hours">Hours</option>
+                  <option value="days">Days</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowKillSwitch(false)}
+                className="flex-1 py-3 rounded-xl font-medium transition-colors"
+                style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={activateKillSwitch}
+                className="flex-1 py-3 rounded-xl font-medium bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+              >
+                Activate Kill Switch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Search,
   Filter,
@@ -17,16 +17,20 @@ import {
   RefreshCw
 } from 'lucide-react'
 import axios from 'axios'
+import { io } from 'socket.io-client'
 
 const TradeManagement = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterType, setFilterType] = useState('all')
+  const [filterUser, setFilterUser] = useState('all') // Filter by user
   const [activeTab, setActiveTab] = useState('open') // open, pending, history
   const [trades, setTrades] = useState([])
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(null)
+  const [prices, setPrices] = useState({})
+  const socketRef = useRef(null)
   
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -34,16 +38,23 @@ const TradeManagement = () => {
   const [showCloseModal, setShowCloseModal] = useState(false)
   const [selectedTrade, setSelectedTrade] = useState(null)
   
+  // Trading accounts for selected user
+  const [userAccounts, setUserAccounts] = useState([])
+  const [loadingAccounts, setLoadingAccounts] = useState(false)
+
   // Create trade form
   const [createForm, setCreateForm] = useState({
     userId: '',
+    tradingAccountId: '',
     symbol: 'EURUSD',
     type: 'buy',
+    orderType: 'market', // market or pending
     amount: 0.01,
     leverage: 100,
     stopLoss: '',
     takeProfit: '',
-    price: ''
+    pendingPrice: '',
+    openTime: ''
   })
   
   // Modify form - full admin control
@@ -61,11 +72,85 @@ const TradeManagement = () => {
     closedAt: ''
   })
 
-  const symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'XAUUSD', 'XAGUSD', 'BTCUSD', 'ETHUSD']
+  const symbols = [
+    // Forex Majors
+    'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD',
+    // Forex Minors
+    'EURGBP', 'EURJPY', 'GBPJPY', 'AUDJPY', 'EURAUD', 'GBPAUD', 'EURCHF',
+    // Metals
+    'XAUUSD', 'XAGUSD',
+    // Crypto
+    'BTCUSD', 'ETHUSD', 'LTCUSD', 'XRPUSD',
+    // Indices
+    'US30', 'US100', 'US500', 'DE30', 'UK100', 'JP225',
+    // Commodities
+    'USOIL', 'UKOIL', 'NATGAS'
+  ]
+
+  // Fetch trading accounts when user is selected
+  const fetchUserAccounts = async (userId) => {
+    if (!userId) {
+      setUserAccounts([])
+      return
+    }
+    try {
+      setLoadingAccounts(true)
+      const res = await axios.get(`/api/admin/users/${userId}/trading-accounts`, getAuthHeader())
+      if (res.data.success) {
+        setUserAccounts(res.data.data || [])
+        // Auto-select first account if available
+        if (res.data.data?.length > 0) {
+          setCreateForm(prev => ({ ...prev, tradingAccountId: res.data.data[0]._id }))
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching user accounts:', err)
+      setUserAccounts([])
+    } finally {
+      setLoadingAccounts(false)
+    }
+  }
+
+  // Handle user selection change
+  const handleUserChange = (userId) => {
+    setCreateForm(prev => ({ ...prev, userId, tradingAccountId: '' }))
+    fetchUserAccounts(userId)
+  }
 
   const getAuthHeader = () => ({
     headers: { Authorization: `Bearer ${localStorage.getItem('adminToken')}` }
   })
+
+  // Socket connection for real-time prices
+  useEffect(() => {
+    const socket = io('http://localhost:5001')
+    socketRef.current = socket
+
+    socket.on('connect', () => {
+      console.log('[Admin TradeManagement] Socket connected')
+    })
+
+    socket.on('prices', (priceData) => {
+      setPrices(priceData)
+    })
+
+    socket.on('tick', (tick) => {
+      if (tick?.symbol) {
+        setPrices(prev => ({
+          ...prev,
+          [tick.symbol]: { bid: tick.bid, ask: tick.ask }
+        }))
+      }
+    })
+
+    // Listen for trade events to refresh instantly
+    socket.on('tradeClosed', () => fetchData())
+    socket.on('orderExecuted', () => fetchData())
+
+    return () => {
+      socket.disconnect()
+    }
+  }, [])
 
   useEffect(() => {
     fetchData()
@@ -106,14 +191,18 @@ const TradeManagement = () => {
         setShowCreateModal(false)
         setCreateForm({
           userId: '',
+          tradingAccountId: '',
           symbol: 'EURUSD',
           type: 'buy',
+          orderType: 'market',
           amount: 0.01,
           leverage: 100,
           stopLoss: '',
           takeProfit: '',
-          price: ''
+          pendingPrice: '',
+          openTime: ''
         })
+        setUserAccounts([])
         fetchData()
       }
     } catch (err) {
@@ -210,6 +299,40 @@ const TradeManagement = () => {
     setShowCloseModal(true)
   }
 
+  // Calculate real-time P/L for open trades
+  const calculatePnL = (trade) => {
+    if (trade.status !== 'open' && trade.status !== 'Open') {
+      return trade.profit || 0
+    }
+    
+    const priceData = prices[trade.symbol]
+    if (!priceData) return trade.profit || 0
+    
+    const currentPrice = trade.type === 'buy' ? priceData.bid : priceData.ask
+    if (!currentPrice || !trade.price) return trade.profit || 0
+    
+    const pipValue = trade.symbol?.includes('JPY') ? 0.01 : 0.0001
+    const priceDiff = trade.type === 'buy' 
+      ? currentPrice - trade.price 
+      : trade.price - currentPrice
+    
+    // Calculate P/L based on lot size (1 lot = 100,000 units for forex)
+    const lotSize = trade.symbol?.includes('XAU') ? 100 : 
+                   trade.symbol?.includes('BTC') ? 1 :
+                   trade.symbol?.includes('US') || trade.symbol?.includes('DE') || trade.symbol?.includes('UK') || trade.symbol?.includes('JP') ? 1 : 100000
+    const pnl = priceDiff * (trade.amount || 0.01) * lotSize
+    
+    return pnl
+  }
+
+  // Get current price for display
+  const getCurrentPrice = (trade) => {
+    if (trade.status !== 'open') return trade.closePrice || '-'
+    const priceData = prices[trade.symbol]
+    if (!priceData) return '-'
+    return trade.type === 'buy' ? priceData.bid?.toFixed(5) : priceData.ask?.toFixed(5)
+  }
+
   const filteredTrades = trades.filter(trade => {
     const userName = trade.user?.firstName || trade.userId?.firstName || ''
     const userEmail = trade.user?.email || ''
@@ -225,7 +348,12 @@ const TradeManagement = () => {
     else if (activeTab === 'history') matchesTab = trade.status === 'closed' || trade.status === 'cancelled'
     
     const matchesType = filterType === 'all' || (trade.type || '').toLowerCase() === filterType.toLowerCase()
-    return matchesSearch && matchesTab && matchesType
+    
+    // Filter by user
+    const userId = trade.user?._id || trade.userId?._id || trade.user || ''
+    const matchesUser = filterUser === 'all' || userId === filterUser
+    
+    return matchesSearch && matchesTab && matchesType && matchesUser
   })
 
   const totalVolume = trades.reduce((sum, t) => sum + (t.amount || 0), 0)
@@ -329,6 +457,19 @@ const TradeManagement = () => {
             <option value="buy">Buy</option>
             <option value="sell">Sell</option>
           </select>
+          <select
+            value={filterUser}
+            onChange={(e) => setFilterUser(e.target.value)}
+            className="px-4 py-2 rounded-xl text-sm focus:outline-none min-w-[200px]"
+            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+          >
+            <option value="all">All Users</option>
+            {users.map(user => (
+              <option key={user._id} value={user._id}>
+                {user.firstName} {user.lastName} ({user.email?.split('@')[0]})
+              </option>
+            ))}
+          </select>
         </div>
         <div className="flex items-center gap-2">
           <button 
@@ -412,10 +553,10 @@ const TradeManagement = () => {
                     <td className="py-4 px-4 text-sm" style={{ color: 'var(--text-muted)' }}>1:{trade.leverage}</td>
                     <td className="py-4 px-4 text-sm font-mono" style={{ color: 'var(--text-primary)' }}>{trade.price?.toFixed(5)}</td>
                     <td className="py-4 px-4 text-sm font-mono" style={{ color: 'var(--text-primary)' }}>
-                      {trade.closePrice?.toFixed(5) || '-'}
+                      {getCurrentPrice(trade)}
                     </td>
-                    <td className="py-4 px-4 text-sm font-semibold" style={{ color: (trade.profit || 0) >= 0 ? '#22c55e' : '#ef4444' }}>
-                      {(trade.profit || 0) >= 0 ? '+' : ''}${(trade.profit || 0).toFixed(2)}
+                    <td className="py-4 px-4 text-sm font-semibold" style={{ color: calculatePnL(trade) >= 0 ? '#22c55e' : '#ef4444' }}>
+                      {calculatePnL(trade) >= 0 ? '+' : ''}${calculatePnL(trade).toFixed(2)}
                     </td>
                     <td className="py-4 px-4">
                       <span 
@@ -498,19 +639,20 @@ const TradeManagement = () => {
       {/* Create Trade Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-lg rounded-2xl p-6" style={{ backgroundColor: 'var(--bg-card)' }}>
+          <div className="w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: 'var(--bg-card)' }}>
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Create Trade for User</h3>
-              <button onClick={() => setShowCreateModal(false)}>
+              <button onClick={() => { setShowCreateModal(false); setUserAccounts([]); }}>
                 <X size={20} style={{ color: 'var(--text-muted)' }} />
               </button>
             </div>
             <form onSubmit={handleCreateTrade} className="space-y-4">
+              {/* User Selection */}
               <div>
-                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Select User</label>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Select User *</label>
                 <select
                   value={createForm.userId}
-                  onChange={(e) => setCreateForm({ ...createForm, userId: e.target.value })}
+                  onChange={(e) => handleUserChange(e.target.value)}
                   required
                   className="w-full px-4 py-3 rounded-xl"
                   style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
@@ -518,11 +660,70 @@ const TradeManagement = () => {
                   <option value="">Select user...</option>
                   {users.map(user => (
                     <option key={user._id} value={user._id}>
-                      {user.firstName} {user.lastName} ({user.email}) - ${user.balance?.toFixed(2)}
+                      {user.firstName} {user.lastName} ({user.email}) - Wallet: ${user.balance?.toFixed(2)}
                     </option>
                   ))}
                 </select>
               </div>
+
+              {/* Trading Account Selection */}
+              {createForm.userId && (
+                <div>
+                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Trading Account *</label>
+                  {loadingAccounts ? (
+                    <div className="flex items-center gap-2 py-3" style={{ color: 'var(--text-muted)' }}>
+                      <Loader2 size={16} className="animate-spin" /> Loading accounts...
+                    </div>
+                  ) : userAccounts.length > 0 ? (
+                    <select
+                      value={createForm.tradingAccountId}
+                      onChange={(e) => setCreateForm({ ...createForm, tradingAccountId: e.target.value })}
+                      required
+                      className="w-full px-4 py-3 rounded-xl"
+                      style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                    >
+                      <option value="">Select account...</option>
+                      {userAccounts.map(acc => (
+                        <option key={acc._id} value={acc._id}>
+                          {acc.accountNumber} - ${acc.balance?.toFixed(2)} ({acc.accountType?.name || 'Standard'}) {acc.isDemo ? '[DEMO]' : '[LIVE]'}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-sm py-2" style={{ color: '#ef4444' }}>No trading accounts found for this user</p>
+                  )}
+                </div>
+              )}
+
+              {/* Order Type */}
+              <div>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Order Type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCreateForm({ ...createForm, orderType: 'market' })}
+                    className="py-3 rounded-xl font-medium"
+                    style={{ 
+                      backgroundColor: createForm.orderType === 'market' ? '#3b82f6' : 'var(--bg-hover)',
+                      color: createForm.orderType === 'market' ? '#fff' : 'var(--text-secondary)'
+                    }}
+                  >
+                    Market Order
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateForm({ ...createForm, orderType: 'pending' })}
+                    className="py-3 rounded-xl font-medium"
+                    style={{ 
+                      backgroundColor: createForm.orderType === 'pending' ? '#f59e0b' : 'var(--bg-hover)',
+                      color: createForm.orderType === 'pending' ? '#000' : 'var(--text-secondary)'
+                    }}
+                  >
+                    Pending Order
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Symbol</label>
@@ -536,7 +737,7 @@ const TradeManagement = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Type</label>
+                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Side (Buy/Sell)</label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -563,6 +764,24 @@ const TradeManagement = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Pending Price - only for pending orders */}
+              {createForm.orderType === 'pending' && (
+                <div>
+                  <label className="block text-sm mb-2" style={{ color: '#f59e0b' }}>Pending Order Price *</label>
+                  <input
+                    type="number"
+                    step="0.00001"
+                    value={createForm.pendingPrice}
+                    onChange={(e) => setCreateForm({ ...createForm, pendingPrice: e.target.value })}
+                    placeholder="Enter price to trigger order"
+                    required={createForm.orderType === 'pending'}
+                    className="w-full px-4 py-3 rounded-xl"
+                    style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid #f59e0b', color: 'var(--text-primary)' }}
+                  />
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Volume (Lots)</label>
@@ -584,13 +803,13 @@ const TradeManagement = () => {
                     className="w-full px-4 py-3 rounded-xl"
                     style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                   >
-                    {[1, 10, 25, 50, 100, 200, 500].map(l => <option key={l} value={l}>1:{l}</option>)}
+                    {[1, 10, 25, 50, 100, 200, 500, 1000].map(l => <option key={l} value={l}>1:{l}</option>)}
                   </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Stop Loss (optional)</label>
+                  <label className="block text-sm mb-2" style={{ color: '#ef4444' }}>Stop Loss (optional)</label>
                   <input
                     type="number"
                     step="0.00001"
@@ -602,7 +821,7 @@ const TradeManagement = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Take Profit (optional)</label>
+                  <label className="block text-sm mb-2" style={{ color: '#22c55e' }}>Take Profit (optional)</label>
                   <input
                     type="number"
                     step="0.00001"
@@ -614,10 +833,23 @@ const TradeManagement = () => {
                   />
                 </div>
               </div>
+
+              {/* Open Time - custom trade time */}
+              <div>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Open Time (optional - defaults to now)</label>
+                <input
+                  type="datetime-local"
+                  value={createForm.openTime}
+                  onChange={(e) => setCreateForm({ ...createForm, openTime: e.target.value })}
+                  className="w-full px-4 py-3 rounded-xl"
+                  style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                />
+              </div>
+
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => { setShowCreateModal(false); setUserAccounts([]); }}
                   className="flex-1 py-3 rounded-xl font-medium"
                   style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)' }}
                 >
@@ -625,12 +857,12 @@ const TradeManagement = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={actionLoading === 'create'}
+                  disabled={actionLoading === 'create' || (createForm.userId && !createForm.tradingAccountId)}
                   className="flex-1 py-3 rounded-xl font-medium text-white flex items-center justify-center gap-2"
-                  style={{ backgroundColor: createForm.type === 'buy' ? '#22c55e' : '#ef4444' }}
+                  style={{ backgroundColor: createForm.orderType === 'pending' ? '#f59e0b' : (createForm.type === 'buy' ? '#22c55e' : '#ef4444') }}
                 >
                   {actionLoading === 'create' && <Loader2 size={16} className="animate-spin" />}
-                  {createForm.type === 'buy' ? 'Open BUY' : 'Open SELL'}
+                  {createForm.orderType === 'pending' ? 'Place Pending Order' : (createForm.type === 'buy' ? 'Open BUY' : 'Open SELL')}
                 </button>
               </div>
             </form>

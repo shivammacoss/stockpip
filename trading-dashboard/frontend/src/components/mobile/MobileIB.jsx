@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { ArrowLeft, Users, DollarSign, Copy, Loader2, TrendingUp, Wallet, Clock, Share2, CheckCircle, RefreshCw, UserPlus, ArrowDownToLine } from 'lucide-react'
+import { ArrowLeft, Users, DollarSign, Copy, Loader2, TrendingUp, Wallet, Clock, Share2, CheckCircle, RefreshCw, UserPlus, ArrowDownToLine, Award, Lock, Unlock, ChevronRight } from 'lucide-react'
 import axios from 'axios'
 import { useTheme } from '../../context/ThemeContext'
 
@@ -23,6 +23,7 @@ const MobileIB = ({ onBack }) => {
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
 
   const getAuthHeader = () => ({
     headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
@@ -61,9 +62,18 @@ const MobileIB = ({ onBack }) => {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  // Generate dynamic referral link based on current origin (auto-updates with port/domain changes)
+  const getDynamicReferralLink = () => {
+    const referralCode = profile?.referralCode || profile?.ibId
+    if (!referralCode) return ''
+    return `${window.location.origin}/register?ref=${referralCode}`
+  }
+
+  const referralLink = getDynamicReferralLink()
+
   const handleShare = () => {
     if (navigator.share) {
-      navigator.share({ title: 'Join Hcfinvest', url: profile?.referralLink })
+      navigator.share({ title: 'Join Hcfinvest', url: referralLink })
     }
   }
 
@@ -84,7 +94,25 @@ const MobileIB = ({ onBack }) => {
     }
   }
 
-  const referralLink = profile?.referralLink || (profile?.referralCode ? `${window.location.origin}/register?ref=${profile.referralCode}` : '')
+  const handleRequestUpgrade = async (level) => {
+    if (!confirm(`Request upgrade to ${level.name} level?`)) return
+    try {
+      setUpgradeLoading(true)
+      const res = await axios.post('/api/ib/request-upgrade', { requestedLevel: level.level }, getAuthHeader())
+      if (res.data.success) {
+        // Immediately update profile state for instant UI feedback
+        setProfile(prev => ({
+          ...prev,
+          upgradeRequest: res.data.data.upgradeRequest
+        }))
+        alert(res.data.message)
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to request upgrade')
+    } finally {
+      setUpgradeLoading(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -96,9 +124,9 @@ const MobileIB = ({ onBack }) => {
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
+    { id: 'levels', label: 'Levels' },
     { id: 'referrals', label: 'Referrals' },
-    { id: 'commissions', label: 'Commissions' },
-    { id: 'withdrawals', label: 'Withdrawals' }
+    { id: 'withdrawals', label: 'History' }
   ]
 
   return (
@@ -241,22 +269,22 @@ const MobileIB = ({ onBack }) => {
             <div className="p-3 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
               <h3 className="text-sm font-semibold mb-3" style={{ color: textPrimary }}>Your Commission Model</h3>
               <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-xs" style={{ color: textSecondary }}>Type:</span>
-                  <span className="text-xs font-medium capitalize" style={{ color: textPrimary }}>{profile?.commissionType?.replace('_', ' ')}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-xs" style={{ color: textSecondary }}>Rate:</span>
-                  <span className="text-xs font-medium" style={{ color: '#22c55e' }}>
-                    {profile?.commissionType === 'per_lot' ? `$${profile?.commissionValue} per lot` :
-                     profile?.commissionType === 'percentage_profit' ? `${profile?.commissionValue}% of profit` :
-                     `${profile?.commissionValue}%`}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs" style={{ color: textSecondary }}>Level:</span>
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: `${profile?.levelColor || '#3b82f6'}20`, color: profile?.levelColor || '#3b82f6' }}>
+                    {profile?.levelName || 'Standard'}
                   </span>
                 </div>
-                {profile?.firstDepositCommission?.enabled && (
-                  <div className="flex justify-between">
-                    <span className="text-xs" style={{ color: '#6b7280' }}>First Deposit Bonus:</span>
-                    <span className="text-xs font-medium" style={{ color: '#22c55e' }}>{profile?.firstDepositCommission?.percentage}%</span>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs" style={{ color: textSecondary }}>Commission Rate:</span>
+                  <span className="text-lg font-bold" style={{ color: '#22c55e' }}>
+                    ${profile?.effectiveCommission || 2}/lot
+                  </span>
+                </div>
+                {profile?.customCommission?.enabled && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs" style={{ color: textSecondary }}>Custom Rate:</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-yellow-500/20 text-yellow-500">Active</span>
                   </div>
                 )}
                 <div className="flex justify-between">
@@ -268,6 +296,87 @@ const MobileIB = ({ onBack }) => {
               </div>
             </div>
           </>
+        )}
+
+        {/* Levels Tab */}
+        {activeTab === 'levels' && (
+          <div className="space-y-4">
+            {/* Progress to Next Level */}
+            {profile?.nextLevel && (
+              <div className="p-4 rounded-xl" style={{ backgroundColor: bgCard, border: `1px solid ${borderColor}` }}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs" style={{ color: textSecondary }}>Progress to {profile.nextLevel.name}</span>
+                  <span className="text-sm font-bold" style={{ color: profile.nextLevel.color }}>{profile.nextLevel.progressPercent}%</span>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden mb-2" style={{ backgroundColor: bgSecondary }}>
+                  <div 
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${profile.nextLevel.progressPercent}%`, backgroundColor: profile.nextLevel.color }}
+                  />
+                </div>
+                <p className="text-xs" style={{ color: textSecondary }}>
+                  {profile.nextLevel.referralsNeeded > 0 
+                    ? `${profile.nextLevel.referralsNeeded} more referrals needed`
+                    : `You qualify! Level will upgrade automatically.`
+                  }
+                </p>
+              </div>
+            )}
+
+            {/* Auto-Upgrade Notice */}
+            <div className="p-3 rounded-xl bg-blue-500/10 flex items-center gap-2">
+              <TrendingUp size={16} className="text-blue-500" />
+              <span className="text-xs text-blue-500">Auto-upgrade enabled - levels upgrade when you reach referral targets</span>
+            </div>
+
+            {/* All Levels */}
+            <div className="space-y-2">
+              {profile?.allLevels?.map((level) => (
+                <div 
+                  key={level.level}
+                  className={`p-4 rounded-xl ${level.isCurrentLevel ? 'ring-2' : ''}`}
+                  style={{ 
+                    backgroundColor: level.isCurrentLevel ? `${level.color}15` : bgCard,
+                    border: `1px solid ${level.isCurrentLevel ? level.color : borderColor}`,
+                    ringColor: level.color
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: `${level.color}30` }}>
+                        {level.isUnlocked ? <Unlock size={18} style={{ color: level.color }} /> : <Lock size={18} style={{ color: textSecondary }} />}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold" style={{ color: level.isUnlocked ? level.color : textSecondary }}>{level.name}</span>
+                          {level.isCurrentLevel && (
+                            <span className="px-2 py-0.5 rounded-full text-xs bg-green-500 text-white">Current</span>
+                          )}
+                        </div>
+                        <p className="text-xs" style={{ color: textSecondary }}>
+                          {level.minReferrals > 0 ? `${level.minReferrals}+ referrals required` : 'Default level'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-bold" style={{ color: level.isUnlocked ? textPrimary : textSecondary }}>
+                        ${level.commissionPerLot}
+                      </p>
+                      <p className="text-xs" style={{ color: textSecondary }}>per lot</p>
+                    </div>
+                  </div>
+                  {!level.isCurrentLevel && level.level > profile.commissionLevel && (
+                    <div className="mt-3 py-2 rounded-lg text-xs text-center" style={{ backgroundColor: bgSecondary }}>
+                      {level.isUnlocked 
+                        ? <span className="text-green-500 font-medium">✓ Qualified - Will auto-upgrade</span>
+                        : <span style={{ color: textSecondary }}>Need {level.minReferrals - (profile?.stats?.totalReferrals || 0)} more referrals</span>
+                      }
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
         {activeTab === 'referrals' && (

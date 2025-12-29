@@ -12,6 +12,27 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
     text: { color: 'var(--text-primary)' },
     textSecondary: { color: 'var(--text-secondary)' },
   }
+
+  // Get decimals based on symbol (matching instrument settings)
+  const getDecimals = (sym) => {
+    if (!sym) return 5
+    if (sym.includes('JPY')) return 3
+    if (sym.includes('BTC')) return 2
+    if (sym.includes('ETH')) return 2
+    if (sym.includes('XAU')) return 2
+    if (sym.includes('XAG')) return 3
+    if (sym.includes('US30') || sym.includes('US500') || sym.includes('US100') || sym.includes('DE30') || sym.includes('UK100')) return 1
+    if (sym.includes('JP225')) return 0
+    if (sym.includes('OIL')) return 2
+    if (sym.includes('XNG')) return 3
+    if (sym.includes('LTC') || sym.includes('XRP') || sym.includes('DOGE') || sym.includes('SOL')) return 4
+    return 5
+  }
+
+  const formatPrice = (price) => {
+    if (!price) return '-.--'
+    return parseFloat(price.toFixed(getDecimals(symbol))).toString()
+  }
   const [volume, setVolume] = useState(0.01)
   const [entryPrice, setEntryPrice] = useState('')
   const [showTakeProfit, setShowTakeProfit] = useState(false)
@@ -25,6 +46,8 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
   const [tradeType, setTradeType] = useState('buy') // 'buy' or 'sell' for market orders
   const [selectedLeverage, setSelectedLeverage] = useState(100) // Default to 1:100
   const [maxLeverage, setMaxLeverage] = useState(100)
+  const [chargesInfo, setChargesInfo] = useState(null)
+  const [tradingAccountId, setTradingAccountId] = useState(null)
 
   const getAuthHeader = () => ({
     headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
@@ -40,6 +63,7 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
         const savedAccount = localStorage.getItem('activeTradingAccount')
         if (savedAccount) {
           const accountData = JSON.parse(savedAccount)
+          setTradingAccountId(accountData._id)
           const accountRes = await axios.get(`/api/trading-accounts/${accountData._id}`, getAuthHeader())
           if (accountRes.data.success && accountRes.data.data) {
             const account = accountRes.data.data
@@ -51,6 +75,7 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
             }
           }
         } else {
+          setTradingAccountId(null)
           const res = await axios.get('/api/auth/me', getAuthHeader())
           if (res.data.success) {
             setMarginFree(res.data.data.balance || 0)
@@ -64,6 +89,30 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
     const interval = setInterval(fetchAccountData, 5000)
     return () => clearInterval(interval)
   }, [])
+
+  // Fetch charges breakdown when symbol/volume/leverage changes
+  useEffect(() => {
+    const fetchCharges = async () => {
+      if (!symbol || !volume || !selectedLeverage) return
+      try {
+        const params = new URLSearchParams({
+          symbol,
+          amount: volume.toString(),
+          leverage: selectedLeverage.toString(),
+          ...(tradingAccountId && { tradingAccountId }),
+          _t: Date.now().toString() // Cache bust
+        })
+        const res = await axios.get(`/api/trades/calculate-charges?${params}`, getAuthHeader())
+        if (res.data.success) {
+          setChargesInfo(res.data.data)
+        }
+      } catch (err) {
+        console.error('[OrderPanel] Charges fetch error:', err)
+      }
+    }
+    const timer = setTimeout(fetchCharges, 300) // Debounce
+    return () => clearTimeout(timer)
+  }, [symbol, volume, selectedLeverage, tradingAccountId])
 
   // Fetch mock prices from backend
   useEffect(() => {
@@ -119,14 +168,39 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
     if (symbol.includes('XAU')) contractSize = 100
     else if (symbol.includes('XAG')) contractSize = 5000
     else if (symbol.includes('BTC') || symbol.includes('ETH')) contractSize = 1
-    return (price * contractSize * volume) / 100 // 1:100 leverage
+    return (price * contractSize * volume) / selectedLeverage
   }
 
   const marginRequired = calculateMargin()
+  
+  // Get total required - use local margin with selected leverage + charges
+  const getTotalRequired = () => {
+    return marginRequired + (chargesInfo?.totalCharges || 0)
+  }
+
+  // Check if trading is locked (kill switch)
+  const isTradingLocked = () => {
+    const savedLockEnd = localStorage.getItem('tradingLockEnd')
+    if (savedLockEnd) {
+      const endTime = new Date(savedLockEnd)
+      if (endTime > new Date()) {
+        return true
+      } else {
+        localStorage.removeItem('tradingLockEnd')
+      }
+    }
+    return false
+  }
 
   // Submit order
   const handleSubmitOrder = async (tradeType) => {
     if (submitting) return
+    
+    // Check kill switch
+    if (isTradingLocked()) {
+      alert('Trading is currently locked. Kill switch is active.')
+      return
+    }
     
     try {
       setSubmitting(true)
@@ -178,7 +252,7 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
   }
 
   return (
-    <div className="w-72 flex flex-col transition-colors" style={styles.panel}>
+    <div className="w-72 h-full flex flex-col transition-colors" style={styles.panel}>
       {/* Header */}
       <div 
         className="flex items-center justify-between p-4"
@@ -218,7 +292,7 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
         </button>
       </div>
       
-      <div className="flex-1 p-4 overflow-y-auto">
+      <div className="flex-1 p-4 overflow-y-auto min-h-0">
         {orderType === 'market' ? (
           <>
             {/* Regular Settings Dropdown */}
@@ -243,7 +317,7 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
               >
                 <div className="text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>Sell</div>
                 <div className="font-semibold" style={{ color: 'var(--accent-red)' }}>
-                  {sellPrice ? sellPrice.toFixed(symbol.includes('JPY') ? 3 : 5) : '-.--'}
+                  {formatPrice(sellPrice)}
                 </div>
               </button>
               <button 
@@ -256,7 +330,7 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
               >
                 <div className="text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>Buy</div>
                 <div className="font-semibold" style={{ color: '#3b82f6' }}>
-                  {buyPrice ? buyPrice.toFixed(symbol.includes('JPY') ? 3 : 5) : '-.--'}
+                  {formatPrice(buyPrice)}
                 </div>
               </button>
             </div>
@@ -439,28 +513,63 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
           )}
         </div>
         
-        {/* Margin Info */}
-        <div className="flex items-center justify-between text-sm mb-4">
-          <span style={{ color: 'var(--text-secondary)' }}>Margin / Free</span>
-          <span style={{ color: 'var(--text-primary)' }}>
-            ${marginRequired.toFixed(2)} / ${marginFree.toLocaleString()}
+        {/* Charges Breakdown - Simplified: Only Spread & Commission */}
+        {chargesInfo && (chargesInfo.spreadPips > 0 || chargesInfo.commission > 0) && (
+          <div className="mb-4 p-3 rounded-lg" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+            <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
+              Trading Charges
+            </div>
+            <div className="space-y-1 text-xs">
+              {chargesInfo.spreadPips > 0 && (
+                <div className="flex justify-between">
+                  <span style={{ color: 'var(--text-muted)' }}>Spread</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{chargesInfo.spreadPips} pips</span>
+                </div>
+              )}
+              {chargesInfo.commission > 0 && (
+                <div className="flex justify-between">
+                  <span style={{ color: 'var(--text-muted)' }}>Commission</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>${chargesInfo.commission.toFixed(2)} (${chargesInfo.commissionPerLot}/lot)</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Margin Info - Always use local calculation with selected leverage */}
+        <div className="flex items-center justify-between text-sm mb-2">
+          <span style={{ color: 'var(--text-secondary)' }}>Margin Required</span>
+          <span style={{ color: 'var(--text-primary)' }}>${marginRequired.toFixed(2)}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm mb-2">
+          <span style={{ color: 'var(--text-secondary)' }}>+ Charges</span>
+          <span style={{ color: '#f59e0b' }}>${chargesInfo?.totalCharges?.toFixed(2) || '0.00'}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm mb-4 pt-2 border-t" style={{ borderColor: 'var(--border-color)' }}>
+          <span className="font-medium" style={{ color: 'var(--text-primary)' }}>Total Required</span>
+          <span className="font-semibold" style={{ color: 'var(--accent-green)' }}>
+            ${(marginRequired + (chargesInfo?.totalCharges || 0)).toFixed(2)}
           </span>
         </div>
+        <div className="flex items-center justify-between text-xs mb-4">
+          <span style={{ color: 'var(--text-muted)' }}>Available Balance</span>
+          <span style={{ color: 'var(--text-secondary)' }}>${marginFree.toLocaleString()}</span>
+        </div>
 
-        {marginRequired > marginFree && (
+        {(marginRequired + (chargesInfo?.totalCharges || 0)) > marginFree && (
           <div className="text-xs text-red-500 mb-4 p-2 rounded-lg bg-red-500/10">
-            ⚠️ Insufficient margin. Required: ${marginRequired.toFixed(2)}
+            ⚠️ Insufficient balance. Required: ${(marginRequired + (chargesInfo?.totalCharges || 0)).toFixed(2)}
           </div>
         )}
       </div>
       
       {/* Submit Button */}
-      <div className="p-4" style={{ borderTop: '1px solid var(--border-color)' }}>
+      <div className="p-4 flex-shrink-0" style={{ borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
         {orderType === 'market' ? (
           <>
             <button 
               onClick={() => handleSubmitOrder(tradeType)}
-              disabled={submitting || marginRequired > marginFree || (tradeType === 'buy' ? !buyPrice : !sellPrice)}
+              disabled={submitting || getTotalRequired() > marginFree || (tradeType === 'buy' ? !buyPrice : !sellPrice)}
               className="w-full font-semibold py-3 rounded-lg transition-colors hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
               style={{ 
                 backgroundColor: tradeType === 'buy' ? '#3b82f6' : 'var(--accent-red)', 
@@ -471,16 +580,14 @@ const OrderPanel = ({ symbol, orderType, setOrderType, onClose }) => {
               {submitting ? 'Opening...' : `Open ${tradeType.toUpperCase()} Order`}
             </button>
             <div className="text-xs text-center mt-2" style={{ color: 'var(--text-muted)' }}>
-              {volume} lots @ {tradeType === 'buy' 
-                ? (buyPrice?.toFixed(symbol.includes('JPY') ? 3 : 5) || '-.--')
-                : (sellPrice?.toFixed(symbol.includes('JPY') ? 3 : 5) || '-.--')}
+              {volume} lots @ {tradeType === 'buy' ? formatPrice(buyPrice) : formatPrice(sellPrice)}
             </div>
           </>
         ) : (
           <>
             <button 
               onClick={() => handleSubmitOrder(pendingOrderType.includes('BUY') ? 'buy' : 'sell')}
-              disabled={submitting || !entryPrice || marginRequired > marginFree}
+              disabled={submitting || !entryPrice || getTotalRequired() > marginFree}
               className="w-full font-semibold py-3 rounded-lg transition-colors hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
               style={{ 
                 backgroundColor: pendingOrderType.includes('BUY') ? '#3b82f6' : 'var(--accent-red)', 

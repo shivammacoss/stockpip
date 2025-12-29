@@ -15,7 +15,11 @@ import {
   Ban,
   CheckCircle,
   Clock,
-  UserCheck
+  UserCheck,
+  Settings,
+  ArrowUp,
+  Trash2,
+  Save
 } from 'lucide-react'
 import axios from 'axios'
 
@@ -31,11 +35,17 @@ const IBManagement = () => {
   const [selectedIB, setSelectedIB] = useState(null)
   const [showEditModal, setShowEditModal] = useState(false)
   const [actionLoading, setActionLoading] = useState(null)
+  
+  // Commission Settings
+  const [commissionSettings, setCommissionSettings] = useState(null)
+  const [upgradeRequests, setUpgradeRequests] = useState([])
+  const [savingSettings, setSavingSettings] = useState(false)
+  
+  // Edit Form for IB
   const [editForm, setEditForm] = useState({
-    commissionType: 'per_lot',
-    commissionValue: 5,
-    firstDepositEnabled: false,
-    firstDepositPercentage: 10,
+    commissionLevel: 1,
+    customCommissionEnabled: false,
+    customCommissionPerLot: 0,
     minWithdrawal: 50,
     commissionFrozen: false
   })
@@ -51,18 +61,22 @@ const IBManagement = () => {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [statsRes, ibsRes, referralsRes, commissionsRes, withdrawalsRes] = await Promise.all([
+      const [statsRes, ibsRes, referralsRes, commissionsRes, withdrawalsRes, settingsRes, upgradesRes] = await Promise.all([
         axios.get('/api/admin/ib/stats', getAuthHeader()),
         axios.get('/api/admin/ib/list', getAuthHeader()),
         axios.get('/api/admin/ib/referrals/all', getAuthHeader()),
         axios.get('/api/admin/ib/commissions/all', getAuthHeader()),
-        axios.get('/api/admin/ib/withdrawals/all', getAuthHeader())
+        axios.get('/api/admin/ib/withdrawals/all', getAuthHeader()),
+        axios.get('/api/admin/ib/commission-settings', getAuthHeader()),
+        axios.get('/api/admin/ib/upgrade-requests', getAuthHeader())
       ])
       if (statsRes.data.success) setStats(statsRes.data.data)
       if (ibsRes.data.success) setIbs(ibsRes.data.data)
       if (referralsRes.data.success) setReferrals(referralsRes.data.data)
       if (commissionsRes.data.success) setCommissions(commissionsRes.data.data)
       if (withdrawalsRes.data.success) setWithdrawals(withdrawalsRes.data.data)
+      if (settingsRes.data.success) setCommissionSettings(settingsRes.data.data)
+      if (upgradesRes.data.success) setUpgradeRequests(upgradesRes.data.data)
     } catch (err) {
       console.error('Failed to fetch IB data:', err)
     } finally {
@@ -75,8 +89,9 @@ const IBManagement = () => {
     if (!confirm(`${action} this IB?`)) return
     try {
       setActionLoading(ib._id)
-      await axios.put(`/api/admin/ib/${ib._id}/suspend`, {}, getAuthHeader())
-      fetchData()
+      const res = await axios.put(`/api/admin/ib/${ib._id}/suspend`, {}, getAuthHeader())
+      // Instant UI update
+      setIbs(prev => prev.map(i => i._id === ib._id ? { ...i, status: ib.status === 'suspended' ? 'active' : 'suspended' } : i))
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to update')
     } finally {
@@ -89,7 +104,8 @@ const IBManagement = () => {
     try {
       setActionLoading(withdrawal._id)
       await axios.put(`/api/admin/ib/withdrawals/${withdrawal._id}/approve`, {}, getAuthHeader())
-      fetchData()
+      // Instant UI update
+      setWithdrawals(prev => prev.map(w => w._id === withdrawal._id ? { ...w, status: 'completed' } : w))
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to approve')
     } finally {
@@ -103,7 +119,8 @@ const IBManagement = () => {
     try {
       setActionLoading(withdrawal._id)
       await axios.put(`/api/admin/ib/withdrawals/${withdrawal._id}/reject`, { reason }, getAuthHeader())
-      fetchData()
+      // Instant UI update
+      setWithdrawals(prev => prev.map(w => w._id === withdrawal._id ? { ...w, status: 'rejected' } : w))
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to reject')
     } finally {
@@ -114,10 +131,9 @@ const IBManagement = () => {
   const openEditModal = (ib) => {
     setSelectedIB(ib)
     setEditForm({
-      commissionType: ib.commissionType || 'per_lot',
-      commissionValue: ib.commissionValue || 5,
-      firstDepositEnabled: ib.firstDepositCommission?.enabled || false,
-      firstDepositPercentage: ib.firstDepositCommission?.percentage || 10,
+      commissionLevel: ib.commissionLevel || 1,
+      customCommissionEnabled: ib.customCommission?.enabled || false,
+      customCommissionPerLot: ib.customCommission?.perLot || 0,
       minWithdrawal: ib.minWithdrawal || 50,
       commissionFrozen: ib.commissionFrozen || false
     })
@@ -128,25 +144,91 @@ const IBManagement = () => {
     if (!selectedIB) return
     try {
       setActionLoading(selectedIB._id)
-      await axios.put(`/api/admin/ib/${selectedIB._id}`, {
-        commissionType: editForm.commissionType,
-        commissionValue: editForm.commissionValue,
-        firstDepositCommission: {
-          enabled: editForm.firstDepositEnabled,
-          percentage: editForm.firstDepositPercentage
+      const res = await axios.put(`/api/admin/ib/${selectedIB._id}`, {
+        commissionLevel: editForm.commissionLevel,
+        customCommission: {
+          enabled: editForm.customCommissionEnabled,
+          perLot: editForm.customCommissionPerLot
         },
         minWithdrawal: editForm.minWithdrawal,
         commissionFrozen: editForm.commissionFrozen
       }, getAuthHeader())
+      // Instant UI update
+      if (res.data.data) {
+        setIbs(prev => prev.map(ib => ib._id === selectedIB._id ? { ...ib, ...res.data.data } : ib))
+      }
       setShowEditModal(false)
       setSelectedIB(null)
-      fetchData()
       alert('IB settings updated successfully!')
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to update IB')
     } finally {
       setActionLoading(null)
     }
+  }
+  
+  const handleSaveCommissionSettings = async () => {
+    try {
+      setSavingSettings(true)
+      await axios.put('/api/admin/ib/commission-settings', commissionSettings, getAuthHeader())
+      alert('Commission settings saved!')
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to save settings')
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+  
+  const handleApproveUpgrade = async (ibId) => {
+    if (!confirm('Approve this upgrade request?')) return
+    try {
+      setActionLoading(ibId)
+      const res = await axios.put(`/api/admin/ib/${ibId}/approve-upgrade`, {}, getAuthHeader())
+      // Instant UI update - remove from upgrade requests list
+      setUpgradeRequests(prev => prev.filter(r => r._id !== ibId))
+      // Update IB in list if present
+      if (res.data.data) {
+        setIbs(prev => prev.map(ib => ib._id === ibId ? { ...ib, ...res.data.data } : ib))
+      }
+      alert('Upgrade approved!')
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to approve')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+  
+  const handleRejectUpgrade = async (ibId) => {
+    if (!confirm('Reject this upgrade request?')) return
+    try {
+      setActionLoading(ibId)
+      await axios.put(`/api/admin/ib/${ibId}/reject-upgrade`, {}, getAuthHeader())
+      // Instant UI update - remove from upgrade requests list
+      setUpgradeRequests(prev => prev.filter(r => r._id !== ibId))
+      alert('Upgrade rejected!')
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to reject')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+  
+  const getLevelName = (levelNum) => {
+    const level = commissionSettings?.levels?.find(l => l.level === levelNum)
+    return level?.name || 'Standard'
+  }
+  
+  const getLevelColor = (levelNum) => {
+    const level = commissionSettings?.levels?.find(l => l.level === levelNum)
+    return level?.color || '#6b7280'
+  }
+  
+  const getEffectiveCommission = (ib) => {
+    if (ib.customCommission?.enabled && ib.customCommission?.perLot > 0) {
+      return ib.customCommission.perLot
+    }
+    const level = commissionSettings?.levels?.find(l => l.level === ib.commissionLevel)
+    return level?.commissionPerLot || commissionSettings?.defaultCommissionPerLot || 2
   }
 
   const filteredIBs = ibs.filter(ib =>
@@ -231,11 +313,14 @@ const IBManagement = () => {
         <button onClick={() => setActiveTab('ibs')} className="px-5 py-2 rounded-xl font-medium flex items-center gap-2" style={{ backgroundColor: activeTab === 'ibs' ? 'var(--accent-blue)' : 'var(--bg-card)', color: activeTab === 'ibs' ? '#fff' : 'var(--text-secondary)' }}>
           <Users size={16} /> All IBs
         </button>
-        <button onClick={() => setActiveTab('referrals')} className="px-5 py-2 rounded-xl font-medium flex items-center gap-2" style={{ backgroundColor: activeTab === 'referrals' ? '#22c55e' : 'var(--bg-card)', color: activeTab === 'referrals' ? '#fff' : 'var(--text-secondary)' }}>
-          <Award size={16} /> Referrals
+        <button onClick={() => setActiveTab('settings')} className="px-5 py-2 rounded-xl font-medium flex items-center gap-2" style={{ backgroundColor: activeTab === 'settings' ? '#f59e0b' : 'var(--bg-card)', color: activeTab === 'settings' ? '#fff' : 'var(--text-secondary)' }}>
+          <Settings size={16} /> Commission Levels
+        </button>
+        <button onClick={() => setActiveTab('upgrades')} className="px-5 py-2 rounded-xl font-medium flex items-center gap-2" style={{ backgroundColor: activeTab === 'upgrades' ? '#ec4899' : 'var(--bg-card)', color: activeTab === 'upgrades' ? '#fff' : 'var(--text-secondary)' }}>
+          <ArrowUp size={16} /> Upgrade Requests {upgradeRequests.length > 0 && `(${upgradeRequests.length})`}
         </button>
         <button onClick={() => setActiveTab('commissions')} className="px-5 py-2 rounded-xl font-medium flex items-center gap-2" style={{ backgroundColor: activeTab === 'commissions' ? '#8b5cf6' : 'var(--bg-card)', color: activeTab === 'commissions' ? '#fff' : 'var(--text-secondary)' }}>
-          <DollarSign size={16} /> Commissions
+          <DollarSign size={16} /> Commission Logs
         </button>
         <button onClick={() => setActiveTab('withdrawals')} className="px-5 py-2 rounded-xl font-medium flex items-center gap-2" style={{ backgroundColor: activeTab === 'withdrawals' ? '#fbbf24' : 'var(--bg-card)', color: activeTab === 'withdrawals' ? '#000' : 'var(--text-secondary)' }}>
           <Clock size={16} /> Withdrawals {pendingWithdrawals.length > 0 && `(${pendingWithdrawals.length})`}
@@ -253,10 +338,10 @@ const IBManagement = () => {
                 <thead>
                   <tr style={{ backgroundColor: 'var(--bg-hover)' }}>
                     <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>IB</th>
-                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Commission</th>
+                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Level</th>
+                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Commission/Lot</th>
                     <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Referrals</th>
                     <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Earnings</th>
-                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Balance</th>
                     <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Status</th>
                     <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Actions</th>
                   </tr>
@@ -268,12 +353,15 @@ const IBManagement = () => {
                         <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{ib.userId?.firstName} {ib.userId?.lastName}</p>
                         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{ib.ibId} • {ib.userId?.email}</p>
                       </td>
-                      <td className="py-4 px-4 text-sm" style={{ color: 'var(--text-secondary)' }}>
-                        {ib.commissionType === 'per_lot' ? `$${ib.commissionValue}/lot` : `${ib.commissionValue}%`}
+                      <td className="py-4 px-4">
+                        <span className="px-2 py-1 rounded-full text-xs font-medium" style={{ backgroundColor: `${getLevelColor(ib.commissionLevel)}20`, color: getLevelColor(ib.commissionLevel) }}>
+                          {getLevelName(ib.commissionLevel)}
+                        </span>
+                        {ib.customCommission?.enabled && <span className="ml-1 text-xs" style={{ color: '#f59e0b' }}>★</span>}
                       </td>
+                      <td className="py-4 px-4 text-sm font-semibold" style={{ color: '#22c55e' }}>${getEffectiveCommission(ib)}/lot</td>
                       <td className="py-4 px-4 text-sm font-semibold" style={{ color: '#3b82f6' }}>{ib.stats?.totalReferrals || 0}</td>
                       <td className="py-4 px-4 text-sm font-semibold" style={{ color: '#22c55e' }}>${ib.wallet?.totalEarned?.toFixed(2) || 0}</td>
-                      <td className="py-4 px-4 text-sm" style={{ color: 'var(--text-primary)' }}>${ib.wallet?.balance?.toFixed(2) || 0}</td>
                       <td className="py-4 px-4">
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${ib.status === 'active' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
                           {ib.status}
@@ -286,6 +374,163 @@ const IBManagement = () => {
                           </button>
                           <button onClick={() => handleSuspendIB(ib)} disabled={actionLoading === ib._id} className={`p-2 rounded-lg ${ib.status === 'suspended' ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
                             {ib.status === 'suspended' ? <UserCheck size={16} style={{ color: '#22c55e' }} /> : <Ban size={16} style={{ color: '#ef4444' }} />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Commission Settings Tab */}
+      {activeTab === 'settings' && commissionSettings && (
+        <div className="space-y-6">
+          {/* Default Commission */}
+          <div className="rounded-2xl p-6" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Global Default Commission</h3>
+              <button onClick={handleSaveCommissionSettings} disabled={savingSettings} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white font-medium disabled:opacity-50">
+                {savingSettings ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save All
+              </button>
+            </div>
+            <div className="flex items-center gap-4">
+              <div>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Default Per-Lot Commission ($)</label>
+                <input type="number" step="0.1" min="0" value={commissionSettings.defaultCommissionPerLot} onChange={(e) => setCommissionSettings({ ...commissionSettings, defaultCommissionPerLot: parseFloat(e.target.value) || 0 })} className="w-32 px-4 py-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+              </div>
+              <p className="text-sm mt-6" style={{ color: 'var(--text-muted)' }}>This rate applies to all new IBs and IBs without a custom level</p>
+            </div>
+          </div>
+
+          {/* Commission Levels */}
+          <div className="rounded-2xl p-6" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Commission Levels</h3>
+              <button onClick={() => {
+                const newLevel = { name: `Level ${commissionSettings.levels.length + 1}`, level: commissionSettings.levels.length + 1, commissionPerLot: 5, minReferrals: 0, description: '', color: '#3b82f6', isActive: true }
+                setCommissionSettings({ ...commissionSettings, levels: [...commissionSettings.levels, newLevel] })
+              }} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/10 text-green-500 font-medium text-sm">
+                <Plus size={16} /> Add Level
+              </button>
+            </div>
+            <p className="text-xs mb-4 p-3 rounded-lg bg-blue-500/10 text-blue-500">
+              <strong>Auto-Upgrade:</strong> IBs automatically upgrade to higher levels when they reach the "Min Referrals" requirement. Set 0 for default/entry level.
+            </p>
+            <div className="space-y-3">
+              {commissionSettings.levels?.map((level, idx) => (
+                <div key={idx} className="flex items-center gap-4 p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)', borderLeft: `4px solid ${level.color}` }}>
+                  <div className="flex-1 grid grid-cols-6 gap-4">
+                    <div>
+                      <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Name</label>
+                      <input type="text" value={level.name} onChange={(e) => {
+                        const newLevels = [...commissionSettings.levels]
+                        newLevels[idx].name = e.target.value
+                        setCommissionSettings({ ...commissionSettings, levels: newLevels })
+                      }} className="w-full px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+                    </div>
+                    <div>
+                      <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Level #</label>
+                      <input type="number" min="1" value={level.level} onChange={(e) => {
+                        const newLevels = [...commissionSettings.levels]
+                        newLevels[idx].level = parseInt(e.target.value)
+                        setCommissionSettings({ ...commissionSettings, levels: newLevels })
+                      }} className="w-full px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+                    </div>
+                    <div>
+                      <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>$/Lot</label>
+                      <input type="number" step="0.1" min="0" value={level.commissionPerLot} onChange={(e) => {
+                        const newLevels = [...commissionSettings.levels]
+                        newLevels[idx].commissionPerLot = parseFloat(e.target.value)
+                        setCommissionSettings({ ...commissionSettings, levels: newLevels })
+                      }} className="w-full px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+                    </div>
+                    <div>
+                      <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Min Referrals</label>
+                      <input type="number" min="0" value={level.minReferrals || 0} onChange={(e) => {
+                        const newLevels = [...commissionSettings.levels]
+                        newLevels[idx].minReferrals = parseInt(e.target.value) || 0
+                        setCommissionSettings({ ...commissionSettings, levels: newLevels })
+                      }} className="w-full px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+                    </div>
+                    <div>
+                      <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Color</label>
+                      <input type="color" value={level.color} onChange={(e) => {
+                        const newLevels = [...commissionSettings.levels]
+                        newLevels[idx].color = e.target.value
+                        setCommissionSettings({ ...commissionSettings, levels: newLevels })
+                      }} className="w-full h-9 rounded-lg cursor-pointer" />
+                    </div>
+                    <div>
+                      <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Description</label>
+                      <input type="text" value={level.description} onChange={(e) => {
+                        const newLevels = [...commissionSettings.levels]
+                        newLevels[idx].description = e.target.value
+                        setCommissionSettings({ ...commissionSettings, levels: newLevels })
+                      }} className="w-full px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} placeholder="Optional" />
+                    </div>
+                  </div>
+                  <button onClick={() => {
+                    if (commissionSettings.levels.length <= 1) return alert('Need at least one level')
+                    const newLevels = commissionSettings.levels.filter((_, i) => i !== idx)
+                    setCommissionSettings({ ...commissionSettings, levels: newLevels })
+                  }} className="p-2 rounded-lg bg-red-500/10">
+                    <Trash2 size={16} style={{ color: '#ef4444' }} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upgrade Requests Tab */}
+      {activeTab === 'upgrades' && (
+        <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          {upgradeRequests.length === 0 ? (
+            <p className="text-center py-8" style={{ color: 'var(--text-muted)' }}>No pending upgrade requests</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr style={{ backgroundColor: 'var(--bg-hover)' }}>
+                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>IB</th>
+                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Current Level</th>
+                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Requested Level</th>
+                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Requested At</th>
+                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Note</th>
+                    <th className="text-left py-4 px-4 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {upgradeRequests.map((ib) => (
+                    <tr key={ib._id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <td className="py-4 px-4">
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{ib.userId?.firstName} {ib.userId?.lastName}</p>
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{ib.ibId}</p>
+                      </td>
+                      <td className="py-4 px-4">
+                        <span className="px-2 py-1 rounded-full text-xs font-medium" style={{ backgroundColor: `${getLevelColor(ib.commissionLevel)}20`, color: getLevelColor(ib.commissionLevel) }}>
+                          {ib.currentLevelName}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4">
+                        <span className="px-2 py-1 rounded-full text-xs font-medium" style={{ backgroundColor: `${getLevelColor(ib.upgradeRequest?.requestedLevel)}20`, color: getLevelColor(ib.upgradeRequest?.requestedLevel) }}>
+                          {ib.requestedLevelName}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{ib.upgradeRequest?.requestedAt ? new Date(ib.upgradeRequest.requestedAt).toLocaleString() : '-'}</td>
+                      <td className="py-4 px-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{ib.upgradeRequest?.note || '-'}</td>
+                      <td className="py-4 px-4">
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => handleApproveUpgrade(ib._id)} disabled={actionLoading === ib._id} className="p-2 rounded-lg bg-green-500/10">
+                            <CheckCircle size={16} style={{ color: '#22c55e' }} />
+                          </button>
+                          <button onClick={() => handleRejectUpgrade(ib._id)} disabled={actionLoading === ib._id} className="p-2 rounded-lg bg-red-500/10">
+                            <X size={16} style={{ color: '#ef4444' }} />
                           </button>
                         </div>
                       </td>
@@ -448,58 +693,44 @@ const IBManagement = () => {
             </div>
 
             <div className="space-y-4">
-              {/* Commission Type */}
+              {/* Commission Level */}
               <div>
-                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Commission Type</label>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Commission Level</label>
                 <select
-                  value={editForm.commissionType}
-                  onChange={(e) => setEditForm({ ...editForm, commissionType: e.target.value })}
+                  value={editForm.commissionLevel}
+                  onChange={(e) => setEditForm({ ...editForm, commissionLevel: parseInt(e.target.value) })}
                   className="w-full px-4 py-3 rounded-xl"
                   style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                 >
-                  <option value="per_lot">Per Lot (Fixed $)</option>
-                  <option value="percentage_spread">Percentage of Spread</option>
-                  <option value="percentage_profit">Percentage of Profit</option>
+                  {commissionSettings?.levels?.map((level) => (
+                    <option key={level.level} value={level.level}>{level.name} - ${level.commissionPerLot}/lot</option>
+                  ))}
                 </select>
               </div>
 
-              {/* Commission Value */}
-              <div>
-                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
-                  Commission Value {editForm.commissionType === 'per_lot' ? '($ per lot)' : '(%)'}
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={editForm.commissionValue}
-                  onChange={(e) => setEditForm({ ...editForm, commissionValue: parseFloat(e.target.value) })}
-                  className="w-full px-4 py-3 rounded-xl"
-                  style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                />
-              </div>
-
-              {/* First Deposit Commission */}
-              <div className="p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+              {/* Custom Commission Override */}
+              <div className="p-4 rounded-xl" style={{ backgroundColor: editForm.customCommissionEnabled ? 'rgba(245, 158, 11, 0.1)' : 'var(--bg-hover)' }}>
                 <label className="flex items-center gap-3 cursor-pointer mb-3">
                   <input
                     type="checkbox"
-                    checked={editForm.firstDepositEnabled}
-                    onChange={(e) => setEditForm({ ...editForm, firstDepositEnabled: e.target.checked })}
+                    checked={editForm.customCommissionEnabled}
+                    onChange={(e) => setEditForm({ ...editForm, customCommissionEnabled: e.target.checked })}
                     className="w-5 h-5 rounded"
                   />
-                  <span style={{ color: 'var(--text-primary)' }}>Enable First Deposit Commission</span>
-                </label>
-                {editForm.firstDepositEnabled && (
                   <div>
-                    <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>First Deposit %</label>
+                    <span style={{ color: editForm.customCommissionEnabled ? '#f59e0b' : 'var(--text-primary)' }}>Custom Commission Override</span>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Set a custom rate that overrides the level</p>
+                  </div>
+                </label>
+                {editForm.customCommissionEnabled && (
+                  <div>
+                    <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Custom $/Lot</label>
                     <input
                       type="number"
-                      step="1"
-                      min="1"
-                      max="100"
-                      value={editForm.firstDepositPercentage}
-                      onChange={(e) => setEditForm({ ...editForm, firstDepositPercentage: parseInt(e.target.value) })}
+                      step="0.1"
+                      min="0"
+                      value={editForm.customCommissionPerLot}
+                      onChange={(e) => setEditForm({ ...editForm, customCommissionPerLot: parseFloat(e.target.value) })}
                       className="w-full px-4 py-3 rounded-xl"
                       style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                     />

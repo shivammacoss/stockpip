@@ -13,7 +13,7 @@ const MobileHistory = () => {
   const [endDate, setEndDate] = useState('')
   const [dateLabel, setDateLabel] = useState('All Time')
 
-  // Get decimals based on symbol
+  // Get decimals based on symbol (matching instrument settings)
   const getDecimals = (symbol) => {
     if (!symbol) return 5
     if (symbol.includes('JPY')) return 3
@@ -21,13 +21,17 @@ const MobileHistory = () => {
     if (symbol.includes('ETH')) return 2
     if (symbol.includes('XAU')) return 2
     if (symbol.includes('XAG')) return 3
+    if (symbol.includes('US30') || symbol.includes('US500') || symbol.includes('US100') || symbol.includes('DE30') || symbol.includes('UK100')) return 1
+    if (symbol.includes('JP225')) return 0
+    if (symbol.includes('OIL')) return 2
+    if (symbol.includes('XNG')) return 3
     if (symbol.includes('LTC') || symbol.includes('XRP') || symbol.includes('DOGE') || symbol.includes('SOL')) return 4
     return 5
   }
 
   const formatPrice = (price, symbol) => {
     if (!price) return '---'
-    return price.toFixed(getDecimals(symbol))
+    return parseFloat(price.toFixed(getDecimals(symbol))).toString()
   }
 
   const applyDateRange = () => {

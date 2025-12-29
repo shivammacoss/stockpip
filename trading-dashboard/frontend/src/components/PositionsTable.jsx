@@ -16,6 +16,38 @@ const PositionsTable = () => {
   const [showCloseDialog, setShowCloseDialog] = useState(null) // Trade to confirm close
   const [showOneClick, setShowOneClick] = useState(false)
   const [quickLots, setQuickLots] = useState(0.01)
+
+  // Check if trading is locked (kill switch)
+  const isTradingLocked = () => {
+    const savedLockEnd = localStorage.getItem('tradingLockEnd')
+    if (savedLockEnd) {
+      const endTime = new Date(savedLockEnd)
+      if (endTime > new Date()) return true
+      else localStorage.removeItem('tradingLockEnd')
+    }
+    return false
+  }
+
+  // Get decimals based on symbol (matching instrument settings)
+  const getDecimals = (symbol) => {
+    if (!symbol) return 5
+    if (symbol.includes('JPY')) return 3
+    if (symbol.includes('BTC')) return 2
+    if (symbol.includes('ETH')) return 2
+    if (symbol.includes('XAU')) return 2
+    if (symbol.includes('XAG')) return 3
+    if (symbol.includes('US30') || symbol.includes('US500') || symbol.includes('US100') || symbol.includes('DE30') || symbol.includes('UK100')) return 1
+    if (symbol.includes('JP225')) return 0
+    if (symbol.includes('OIL')) return 2
+    if (symbol.includes('XNG')) return 3
+    if (symbol.includes('LTC') || symbol.includes('XRP') || symbol.includes('DOGE') || symbol.includes('SOL')) return 4
+    return 5
+  }
+
+  const formatPrice = (price, symbol) => {
+    if (!price && price !== 0) return '---'
+    return price.toFixed(getDecimals(symbol))
+  }
   
   const styles = {
     container: { backgroundColor: 'var(--bg-secondary)', borderTop: '1px solid var(--border-color)' },
@@ -70,6 +102,24 @@ const PositionsTable = () => {
     })
     socket.on('stopOut', (data) => {
       console.log('[PositionsTable] Stop out:', data)
+      fetchPositions()
+    })
+    
+    // Copy trade events - instant updates for followers
+    socket.on('trade_copied', (data) => {
+      console.log('[PositionsTable] Copy trade received:', data)
+      fetchPositions()
+    })
+    socket.on('trade_modified', (data) => {
+      console.log('[PositionsTable] Copy trade modified:', data)
+      fetchPositions()
+    })
+    socket.on('trade_closed', (data) => {
+      console.log('[PositionsTable] Copy trade closed:', data)
+      fetchPositions()
+    })
+    socket.on('balanceUpdate', () => {
+      console.log('[PositionsTable] Balance updated')
       fetchPositions()
     })
 
@@ -206,7 +256,7 @@ const PositionsTable = () => {
   const totalPnL = positions.reduce((sum, pos) => sum + calculatePnL(pos), 0)
 
   return (
-    <div className="h-48 flex flex-col transition-colors" style={styles.container}>
+    <div className="h-full flex flex-col transition-colors" style={styles.container}>
       {/* Tabs */}
       <div 
         className="flex items-center justify-between px-4"
@@ -252,6 +302,11 @@ const PositionsTable = () => {
             <div className="flex items-center gap-1.5 rounded-full px-2 py-1" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}>
               <button
                 onClick={async () => {
+                  // Check kill switch
+                  if (isTradingLocked()) {
+                    alert('Trading is currently locked. Kill switch is active.')
+                    return
+                  }
                   const symbol = localStorage.getItem('selectedSymbol') || 'XAUUSD'
                   const activeAccount = JSON.parse(localStorage.getItem('activeTradingAccount') || '{}')
                   console.log('[QuickTrade] SELL', symbol, quickLots, activeAccount._id)
@@ -285,6 +340,11 @@ const PositionsTable = () => {
               />
               <button
                 onClick={async () => {
+                  // Check kill switch
+                  if (isTradingLocked()) {
+                    alert('Trading is currently locked. Kill switch is active.')
+                    return
+                  }
                   const symbol = localStorage.getItem('selectedSymbol') || 'XAUUSD'
                   const activeAccount = JSON.parse(localStorage.getItem('activeTradingAccount') || '{}')
                   console.log('[QuickTrade] BUY', symbol, quickLots, activeAccount._id)
@@ -342,7 +402,7 @@ const PositionsTable = () => {
       </div>
       
       {/* Table Body */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto min-h-0">
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="animate-spin" size={20} style={{ color: 'var(--text-muted)' }} />
@@ -373,12 +433,12 @@ const PositionsTable = () => {
                   </span>
                 </div>
                 <div style={{ color: 'var(--text-secondary)' }}>{(pos.amount || 0).toFixed(2)}</div>
-                <div style={{ color: 'var(--text-secondary)' }}>{pos.price?.toFixed(5)}</div>
-                <div style={{ color: 'var(--text-primary)' }}>{currentPrice?.toFixed(5)}</div>
+                <div style={{ color: 'var(--text-secondary)' }}>{formatPrice(pos.price, pos.symbol)}</div>
+                <div style={{ color: 'var(--text-primary)' }}>{formatPrice(currentPrice, pos.symbol)}</div>
                 <div style={{ color: pos.stopLoss ? '#ef4444' : 'var(--text-muted)' }}>{pos.stopLoss || '-'}</div>
                 <div style={{ color: pos.takeProfit ? '#22c55e' : 'var(--text-muted)' }}>{pos.takeProfit || '-'}</div>
-                <div style={{ color: 'var(--text-muted)' }}>${(pos.fee || 0).toFixed(2)}</div>
-                <div style={{ color: '#fbbf24' }}>{pos.spread || '-'}</div>
+                <div style={{ color: 'var(--text-muted)' }}>${(pos.tradingCharge || pos.commission || 0).toFixed(2)}</div>
+                <div style={{ color: '#fbbf24' }}>{pos.spread || 0} pips</div>
                 <div 
                   className="font-medium"
                   style={{ color: pnl >= 0 ? '#3b82f6' : 'var(--accent-red)' }}
@@ -433,12 +493,12 @@ const PositionsTable = () => {
                 </span>
               </div>
               <div style={{ color: 'var(--text-secondary)' }}>{(order.amount || 0).toFixed(2)}</div>
-              <div style={{ color: '#fbbf24' }}>{order.price?.toFixed(5)} ({order.orderType})</div>
+              <div style={{ color: '#fbbf24' }}>{formatPrice(order.price, order.symbol)} ({order.orderType})</div>
               <div style={{ color: 'var(--text-muted)' }}>-</div>
               <div style={{ color: order.stopLoss ? '#ef4444' : 'var(--text-muted)' }}>{order.stopLoss || '-'}</div>
               <div style={{ color: order.takeProfit ? '#22c55e' : 'var(--text-muted)' }}>{order.takeProfit || '-'}</div>
-              <div style={{ color: 'var(--text-muted)' }}>${(order.fee || 0).toFixed(2)}</div>
-              <div style={{ color: '#fbbf24' }}>{order.spread || '-'}</div>
+              <div style={{ color: 'var(--text-muted)' }}>${(order.tradingCharge || order.commission || 0).toFixed(2)}</div>
+              <div style={{ color: '#fbbf24' }}>{order.spread || 0} pips</div>
               <div style={{ color: 'var(--text-muted)' }}>Pending</div>
               <div className="flex items-center gap-2">
                 <button 
@@ -476,12 +536,12 @@ const PositionsTable = () => {
                 </span>
               </div>
               <div style={{ color: 'var(--text-secondary)' }}>{(trade.amount || 0).toFixed(2)}</div>
-              <div style={{ color: 'var(--text-secondary)' }}>{trade.price?.toFixed(5)}</div>
-              <div style={{ color: 'var(--text-primary)' }}>{trade.closePrice?.toFixed(5)}</div>
+              <div style={{ color: 'var(--text-secondary)' }}>{formatPrice(trade.price, trade.symbol)}</div>
+              <div style={{ color: 'var(--text-primary)' }}>{formatPrice(trade.closePrice, trade.symbol)}</div>
               <div style={{ color: 'var(--text-muted)' }}>{trade.stopLoss || '-'}</div>
               <div style={{ color: 'var(--text-muted)' }}>{trade.takeProfit || '-'}</div>
-              <div style={{ color: 'var(--text-muted)' }}>${(trade.fee || 0).toFixed(2)}</div>
-              <div style={{ color: '#fbbf24' }}>{trade.spread || '-'}</div>
+              <div style={{ color: 'var(--text-muted)' }}>${(trade.tradingCharge || trade.commission || 0).toFixed(2)}</div>
+              <div style={{ color: '#fbbf24' }}>{trade.spread || 0} pips</div>
               <div 
                 className="font-medium"
                 style={{ color: (trade.profit || 0) >= 0 ? '#3b82f6' : 'var(--accent-red)' }}
@@ -580,7 +640,7 @@ const PositionsTable = () => {
               </div>
               <div className="flex justify-between mb-2">
                 <span style={{ color: 'var(--text-muted)' }}>Entry</span>
-                <span style={{ color: 'var(--text-primary)' }}>{showCloseDialog.price?.toFixed(5)}</span>
+                <span style={{ color: 'var(--text-primary)' }}>{formatPrice(showCloseDialog.price, showCloseDialog.symbol)}</span>
               </div>
               <div className="flex justify-between">
                 <span style={{ color: 'var(--text-muted)' }}>Floating P/L</span>

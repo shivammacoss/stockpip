@@ -22,6 +22,8 @@ const ChargesManagement = () => {
   const [activeTab, setActiveTab] = useState('global')
   const [charges, setCharges] = useState([])
   const [symbols, setSymbols] = useState([])
+  const [users, setUsers] = useState([])
+  const [accountTypes, setAccountTypes] = useState([])
   const [stats, setStats] = useState({})
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -33,13 +35,9 @@ const ChargesManagement = () => {
     segment: '',
     symbol: '',
     userId: '',
+    accountTypeId: '',
     spreadPips: 0,
     commissionPerLot: 0,
-    swapLong: 0,
-    swapShort: 0,
-    feePercentage: 0.1,
-    minFee: 0,
-    maxFee: 0,
     description: ''
   })
 
@@ -62,6 +60,24 @@ const ChargesManagement = () => {
       if (chargesRes.data.success) setCharges(chargesRes.data.data)
       if (statsRes.data.success) setStats(statsRes.data.data)
       if (symbolsRes.data.success) setSymbols(symbolsRes.data.data)
+      
+      // Fetch users and account types separately
+      try {
+        const [usersRes, accTypesRes] = await Promise.all([
+          axios.get('/api/admin/users?limit=100', getAuthHeader()),
+          axios.get('/api/admin/account-types', getAuthHeader())
+        ])
+        if (usersRes.data.success) {
+          setUsers(usersRes.data.data?.users || usersRes.data.data || [])
+        }
+        if (accTypesRes.data.success) {
+          setAccountTypes(accTypesRes.data.data || [])
+        }
+      } catch (userErr) {
+        console.error('Failed to fetch users/account types:', userErr)
+        setUsers([])
+        setAccountTypes([])
+      }
     } catch (err) {
       console.error('Failed to fetch charges:', err)
     } finally {
@@ -106,13 +122,9 @@ const ChargesManagement = () => {
       segment: charge.segment || '',
       symbol: charge.symbol || '',
       userId: charge.userId?._id || '',
+      accountTypeId: charge.accountTypeId?._id || charge.accountTypeId || '',
       spreadPips: charge.spreadPips || 0,
       commissionPerLot: charge.commissionPerLot || 0,
-      swapLong: charge.swapLong || 0,
-      swapShort: charge.swapShort || 0,
-      feePercentage: charge.feePercentage || 0.1,
-      minFee: charge.minFee || 0,
-      maxFee: charge.maxFee || 0,
       description: charge.description || ''
     })
     setShowAddModal(true)
@@ -124,19 +136,16 @@ const ChargesManagement = () => {
       segment: '',
       symbol: '',
       userId: '',
+      accountTypeId: '',
       spreadPips: 0,
       commissionPerLot: 0,
-      swapLong: 0,
-      swapShort: 0,
-      feePercentage: 0.1,
-      minFee: 0,
-      maxFee: 0,
       description: ''
     })
   }
 
   const filteredCharges = charges.filter(c => {
     if (activeTab === 'global') return c.scopeType === 'global'
+    if (activeTab === 'accountType') return c.scopeType === 'accountType'
     if (activeTab === 'segment') return c.scopeType === 'segment'
     if (activeTab === 'symbol') return c.scopeType === 'symbol'
     if (activeTab === 'user') return c.scopeType === 'user'
@@ -145,6 +154,10 @@ const ChargesManagement = () => {
 
   const getScopeLabel = (charge) => {
     if (charge.scopeType === 'global') return 'All Instruments'
+    if (charge.scopeType === 'accountType') {
+      const accType = accountTypes.find(a => a._id === charge.accountTypeId || a._id === charge.accountTypeId?._id)
+      return accType?.name || 'Account Type'
+    }
     if (charge.scopeType === 'segment') return charge.segment?.toUpperCase()
     if (charge.scopeType === 'symbol') return charge.symbol
     if (charge.scopeType === 'user') return charge.userId?.email || 'User'
@@ -153,8 +166,9 @@ const ChargesManagement = () => {
 
   const tabs = [
     { id: 'global', label: 'Global', icon: Globe, count: stats.global || 0 },
-    { id: 'segment', label: 'Segment', icon: Layers, count: stats.segment || 0 },
-    { id: 'symbol', label: 'Symbol', icon: TrendingUp, count: stats.symbol || 0 },
+    { id: 'accountType', label: 'Account Type', icon: Layers, count: stats.accountType || 0 },
+    { id: 'segment', label: 'Segment', icon: TrendingUp, count: stats.segment || 0 },
+    { id: 'symbol', label: 'Symbol', icon: DollarSign, count: stats.symbol || 0 },
     { id: 'user', label: 'User', icon: User, count: stats.user || 0 },
   ]
 
@@ -295,23 +309,44 @@ const ChargesManagement = () => {
               {!editingCharge && (
                 <div>
                   <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Scope Type</label>
-                  <div className="grid grid-cols-4 gap-2">
-                    {['global', 'segment', 'symbol', 'user'].map(type => (
+                  <div className="grid grid-cols-5 gap-2">
+                    {['global', 'accountType', 'segment', 'symbol', 'user'].map(type => (
                       <button
                         key={type}
                         type="button"
                         onClick={() => setForm({ ...form, scopeType: type })}
-                        className="py-2 px-4 rounded-xl text-sm font-medium capitalize"
+                        className="py-2 px-3 rounded-xl text-xs font-medium capitalize"
                         style={{
                           backgroundColor: form.scopeType === type ? 'var(--accent-blue)' : 'var(--bg-hover)',
                           color: form.scopeType === type ? '#fff' : 'var(--text-secondary)',
                           border: '1px solid var(--border-color)'
                         }}
                       >
-                        {type}
+                        {type === 'accountType' ? 'Account' : type}
                       </button>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Account Type selector */}
+              {form.scopeType === 'accountType' && (
+                <div>
+                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Account Type</label>
+                  <select
+                    value={form.accountTypeId}
+                    onChange={(e) => setForm({ ...form, accountTypeId: e.target.value })}
+                    required
+                    className="w-full px-4 py-3 rounded-xl"
+                    style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                  >
+                    <option value="">Select account type...</option>
+                    {accountTypes.map(accType => (
+                      <option key={accType._id} value={accType._id}>
+                        {accType.name} ({accType.code})
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
@@ -354,19 +389,24 @@ const ChargesManagement = () => {
                 </div>
               )}
 
-              {/* User ID */}
+              {/* User selector */}
               {form.scopeType === 'user' && (
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>User ID or Email</label>
-                  <input
-                    type="text"
+                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Select User</label>
+                  <select
                     value={form.userId}
                     onChange={(e) => setForm({ ...form, userId: e.target.value })}
-                    placeholder="Enter user ID"
                     required
                     className="w-full px-4 py-3 rounded-xl"
                     style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                  />
+                  >
+                    <option value="">Select user...</option>
+                    {users.map(user => (
+                      <option key={user._id} value={user._id}>
+                        {user.email} - {user.firstName} {user.lastName}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
@@ -390,70 +430,6 @@ const ChargesManagement = () => {
                     step="0.01"
                     value={form.commissionPerLot}
                     onChange={(e) => setForm({ ...form, commissionPerLot: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-4 py-3 rounded-xl"
-                    style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                  />
-                </div>
-              </div>
-
-              {/* Fee Settings */}
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Fee Percentage (%)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.feePercentage}
-                    onChange={(e) => setForm({ ...form, feePercentage: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-4 py-3 rounded-xl"
-                    style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Min Fee ($)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.minFee}
-                    onChange={(e) => setForm({ ...form, minFee: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-4 py-3 rounded-xl"
-                    style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Max Fee ($)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.maxFee}
-                    onChange={(e) => setForm({ ...form, maxFee: parseFloat(e.target.value) || 0 })}
-                    placeholder="0 = no limit"
-                    className="w-full px-4 py-3 rounded-xl"
-                    style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                  />
-                </div>
-              </div>
-
-              {/* Swap Rates */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Swap Long ($/lot/day)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.swapLong}
-                    onChange={(e) => setForm({ ...form, swapLong: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-4 py-3 rounded-xl"
-                    style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Swap Short ($/lot/day)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.swapShort}
-                    onChange={(e) => setForm({ ...form, swapShort: parseFloat(e.target.value) || 0 })}
                     className="w-full px-4 py-3 rounded-xl"
                     style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                   />

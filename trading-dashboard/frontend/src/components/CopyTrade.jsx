@@ -40,9 +40,11 @@ const CopyTrade = () => {
   const [showRequestModal, setShowRequestModal] = useState(false)
   const [selectedMaster, setSelectedMaster] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  const [tradingAccounts, setTradingAccounts] = useState([])
 
   // Follow form state
   const [followForm, setFollowForm] = useState({
+    tradingAccountId: '',
     copyMode: 'multiplier',
     fixedLot: 0.01,
     multiplier: 1.0,
@@ -76,15 +78,24 @@ const CopyTrade = () => {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [mastersRes, followsRes, statusRes] = await Promise.all([
+      const [mastersRes, followsRes, statusRes, accountsRes] = await Promise.all([
         axios.get(`/api/copy-trade/masters?sort=${sortBy}${riskFilter !== 'all' ? `&riskLevel=${riskFilter}` : ''}`, getAuthHeader()),
         axios.get('/api/copy-trade/my-follows', getAuthHeader()),
-        axios.get('/api/copy-trade/my-master-status', getAuthHeader())
+        axios.get('/api/copy-trade/my-master-status', getAuthHeader()),
+        axios.get('/api/trading-accounts', getAuthHeader())
       ])
 
       if (mastersRes.data.success) setMasters(mastersRes.data.data)
       if (followsRes.data.success) setMyFollows(followsRes.data.data)
       if (statusRes.data.success) setMyMasterStatus(statusRes.data.data)
+      if (accountsRes.data.success) {
+        const activeAccounts = accountsRes.data.data.filter(acc => acc.status === 'active' && !acc.isDemo)
+        setTradingAccounts(activeAccounts)
+        // Set default account if available
+        if (activeAccounts.length > 0 && !followForm.tradingAccountId) {
+          setFollowForm(prev => ({ ...prev, tradingAccountId: activeAccounts[0]._id }))
+        }
+      }
     } catch (err) {
       console.error('Failed to fetch copy trade data:', err)
     } finally {
@@ -92,8 +103,48 @@ const CopyTrade = () => {
     }
   }
 
+  // Get selected account details
+  const getSelectedAccount = () => {
+    return tradingAccounts.find(acc => acc._id === followForm.tradingAccountId)
+  }
+
+  // Refresh accounts when modal opens
+  const openFollowModal = async (master) => {
+    setSelectedMaster(master)
+    setShowFollowModal(true)
+    // Refresh trading accounts to get latest balances
+    try {
+      const accountsRes = await axios.get('/api/trading-accounts', getAuthHeader())
+      if (accountsRes.data.success) {
+        const activeAccounts = accountsRes.data.data.filter(acc => acc.status === 'active' && !acc.isDemo)
+        setTradingAccounts(activeAccounts)
+        if (activeAccounts.length > 0 && !followForm.tradingAccountId) {
+          setFollowForm(prev => ({ ...prev, tradingAccountId: activeAccounts[0]._id }))
+        }
+      }
+    } catch (err) {
+      console.error('Failed to refresh accounts:', err)
+    }
+  }
+
   const handleFollow = async () => {
     if (!selectedMaster) return
+    
+    // Validate account selection
+    const selectedAccount = getSelectedAccount()
+    if (!selectedAccount) {
+      alert('Please select a trading account')
+      return
+    }
+    
+    // Check minimum balance on frontend (with tolerance for exact match)
+    const accountBal = parseFloat(selectedAccount.balance) || 0
+    const minRequired = parseFloat(selectedMaster.minCopyAmount) || 0
+    if (accountBal < minRequired - 0.01) {
+      alert(`Selected account has insufficient balance. Minimum required: $${minRequired.toFixed(2)}, Account balance: $${accountBal.toFixed(2)}`)
+      return
+    }
+    
     try {
       setSubmitting(true)
       const res = await axios.post(`/api/copy-trade/follow/${selectedMaster._id}`, followForm, getAuthHeader())
@@ -335,7 +386,7 @@ const CopyTrade = () => {
                   </button>
                 ) : (
                   <button
-                    onClick={() => { setSelectedMaster(master); setShowFollowModal(true); }}
+                    onClick={() => openFollowModal(master)}
                     className="w-full py-3 rounded-xl font-medium text-white flex items-center justify-center gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:opacity-90"
                   >
                     <UserPlus size={18} /> Follow Master
@@ -435,6 +486,63 @@ const CopyTrade = () => {
             </div>
 
             <div className="space-y-4">
+              {/* Trading Account Selection */}
+              <div>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  Select Trading Account <span className="text-red-400">*</span>
+                </label>
+                {tradingAccounts.length > 0 ? (
+                  <>
+                    <select
+                      value={followForm.tradingAccountId}
+                      onChange={(e) => setFollowForm({ ...followForm, tradingAccountId: e.target.value })}
+                      className="w-full px-4 py-3 rounded-xl"
+                      style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                    >
+                      {tradingAccounts.map(acc => (
+                        <option key={acc._id} value={acc._id}>
+                          {acc.accountNumber} - ${acc.balance?.toFixed(2)} ({acc.accountType?.name || 'Standard'})
+                        </option>
+                      ))}
+                    </select>
+                    
+                    {/* Show selected account balance vs minimum required */}
+                    {getSelectedAccount() && (
+                      <div className={`mt-3 p-3 rounded-xl ${
+                        getSelectedAccount()?.balance >= selectedMaster?.minCopyAmount 
+                          ? 'bg-green-500/10 border border-green-500/30' 
+                          : 'bg-red-500/10 border border-red-500/30'
+                      }`}>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>Account Balance:</span>
+                          <span className="font-bold text-lg" style={{ color: getSelectedAccount()?.balance >= selectedMaster?.minCopyAmount ? '#22c55e' : '#ef4444' }}>
+                            ${getSelectedAccount()?.balance?.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center mt-1">
+                          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>Minimum Required:</span>
+                          <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                            ${selectedMaster?.minCopyAmount?.toFixed(2) || '0.00'}
+                          </span>
+                        </div>
+                        {getSelectedAccount()?.balance >= selectedMaster?.minCopyAmount ? (
+                          <p className="text-xs mt-2 text-green-400">✓ Account meets minimum requirement</p>
+                        ) : (
+                          <p className="text-xs mt-2 text-red-400">✗ Insufficient balance. Transfer more funds to this account.</p>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="p-3 rounded-xl text-sm" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444' }}>
+                    No active trading accounts found. Please create a live trading account first.
+                  </div>
+                )}
+                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                  Copy trades will be executed in this account
+                </p>
+              </div>
+
               {/* Copy Mode */}
               <div>
                 <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Copy Mode</label>
@@ -541,10 +649,10 @@ const CopyTrade = () => {
 
               <button
                 onClick={handleFollow}
-                disabled={submitting}
-                className="w-full py-3 rounded-xl font-semibold text-white bg-green-500 hover:bg-green-600 disabled:opacity-50"
+                disabled={submitting || !followForm.tradingAccountId || tradingAccounts.length === 0 || ((parseFloat(getSelectedAccount()?.balance) || 0) < (parseFloat(selectedMaster?.minCopyAmount) || 0) - 0.01)}
+                className="w-full py-3 rounded-xl font-semibold text-white bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {submitting ? 'Following...' : 'Start Copying'}
+                {submitting ? 'Following...' : ((parseFloat(getSelectedAccount()?.balance) || 0) < (parseFloat(selectedMaster?.minCopyAmount) || 0) - 0.01 ? 'Insufficient Balance' : 'Start Copying')}
               </button>
             </div>
           </div>

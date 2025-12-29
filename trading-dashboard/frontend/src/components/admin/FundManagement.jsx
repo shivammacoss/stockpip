@@ -11,7 +11,11 @@ import {
   Filter,
   Loader2,
   X,
-  Image
+  Image,
+  Settings,
+  DollarSign,
+  Save,
+  RefreshCw
 } from 'lucide-react'
 import axios from 'axios'
 
@@ -27,6 +31,15 @@ const FundManagement = () => {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showRejectModal, setShowRejectModal] = useState(false)
+  
+  // Currency settings
+  const [currencySettings, setCurrencySettings] = useState({
+    depositRate: 83,
+    withdrawalRate: 83,
+    depositMarkup: 0,
+    withdrawalMarkup: 0
+  })
+  const [savingSettings, setSavingSettings] = useState(false)
 
   const getAuthHeader = () => ({
     headers: { Authorization: `Bearer ${localStorage.getItem('adminToken')}` }
@@ -45,10 +58,34 @@ const FundManagement = () => {
       ])
       if (depRes.data.success) setDeposits(depRes.data.data || [])
       if (withRes.data.success) setWithdrawals(withRes.data.data || [])
+      
+      // Fetch currency settings
+      try {
+        const settingsRes = await axios.get('/api/admin/settings/currency/rates', getAuthHeader())
+        if (settingsRes.data.success) {
+          setCurrencySettings(settingsRes.data.data)
+        }
+      } catch (e) {
+        console.log('Could not fetch currency settings')
+      }
     } catch (err) {
       console.error('Error fetching transactions:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const saveCurrencySettings = async () => {
+    try {
+      setSavingSettings(true)
+      const res = await axios.put('/api/admin/settings/currency/rates', currencySettings, getAuthHeader())
+      if (res.data.success) {
+        alert('Currency settings saved successfully!')
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to save settings')
+    } finally {
+      setSavingSettings(false)
     }
   }
 
@@ -192,9 +229,173 @@ const FundManagement = () => {
         >
           Withdrawals
         </button>
+        <button
+          onClick={() => setActiveTab('settings')}
+          className={`px-6 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2`}
+          style={{
+            backgroundColor: activeTab === 'settings' ? '#3b82f6' : 'var(--bg-card)',
+            color: activeTab === 'settings' ? '#ffffff' : 'var(--text-secondary)',
+            border: activeTab === 'settings' ? 'none' : '1px solid var(--border-color)'
+          }}
+        >
+          <Settings size={16} />
+          Currency Settings
+        </button>
       </div>
 
-      {/* Filters */}
+      {/* Currency Settings Tab */}
+      {activeTab === 'settings' && (
+        <div className="space-y-6">
+          <div className="p-6 rounded-2xl" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+            <h3 className="text-lg font-semibold mb-6 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+              <DollarSign size={20} style={{ color: '#3b82f6' }} />
+              Currency Conversion Settings (INR ⇄ USD)
+            </h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Deposit Settings */}
+              <div className="p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)' }}>
+                <h4 className="font-medium mb-4 flex items-center gap-2" style={{ color: '#22c55e' }}>
+                  <ArrowDownRight size={18} />
+                  Deposit Conversion (INR → USD)
+                </h4>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
+                      Market Rate (1 USD = ? INR)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={currencySettings.depositRate}
+                      onChange={(e) => setCurrencySettings({ ...currencySettings, depositRate: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-4 py-3 rounded-xl"
+                      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                    />
+                    <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                      Current: ₹{currencySettings.depositRate} = $1
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
+                      Platform Markup (INR per USD)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={currencySettings.depositMarkup}
+                      onChange={(e) => setCurrencySettings({ ...currencySettings, depositMarkup: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-4 py-3 rounded-xl"
+                      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                    />
+                    <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                      User pays: ₹{(currencySettings.depositRate + currencySettings.depositMarkup).toFixed(2)} per $1
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)' }}>
+                    <p className="text-sm" style={{ color: '#22c55e' }}>
+                      <strong>Example:</strong> User deposits ₹10,000<br/>
+                      Gets: ${(10000 / (currencySettings.depositRate + currencySettings.depositMarkup)).toFixed(2)} USD<br/>
+                      Platform earns: ${((10000 / currencySettings.depositRate) - (10000 / (currencySettings.depositRate + currencySettings.depositMarkup))).toFixed(2)} per deposit
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Withdrawal Settings */}
+              <div className="p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)', border: '1px solid var(--border-color)' }}>
+                <h4 className="font-medium mb-4 flex items-center gap-2" style={{ color: '#ef4444' }}>
+                  <ArrowUpRight size={18} />
+                  Withdrawal Conversion (USD → INR)
+                </h4>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
+                      Market Rate (1 USD = ? INR)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={currencySettings.withdrawalRate}
+                      onChange={(e) => setCurrencySettings({ ...currencySettings, withdrawalRate: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-4 py-3 rounded-xl"
+                      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                    />
+                    <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                      Current: $1 = ₹{currencySettings.withdrawalRate}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
+                      Platform Markup (INR per USD deducted)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={currencySettings.withdrawalMarkup}
+                      onChange={(e) => setCurrencySettings({ ...currencySettings, withdrawalMarkup: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-4 py-3 rounded-xl"
+                      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                    />
+                    <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                      User receives: ₹{(currencySettings.withdrawalRate - currencySettings.withdrawalMarkup).toFixed(2)} per $1
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)' }}>
+                    <p className="text-sm" style={{ color: '#ef4444' }}>
+                      <strong>Example:</strong> User withdraws $100<br/>
+                      Gets: ₹{((currencySettings.withdrawalRate - currencySettings.withdrawalMarkup) * 100).toFixed(2)} INR<br/>
+                      Platform earns: ₹{(currencySettings.withdrawalMarkup * 100).toFixed(2)} per withdrawal
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={saveCurrencySettings}
+                disabled={savingSettings}
+                className="flex items-center gap-2 px-6 py-3 rounded-xl font-medium text-white"
+                style={{ backgroundColor: '#3b82f6' }}
+              >
+                {savingSettings ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                Save Currency Settings
+              </button>
+            </div>
+          </div>
+
+          {/* Summary Card */}
+          <div className="p-6 rounded-2xl" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+            <h4 className="font-medium mb-4" style={{ color: 'var(--text-primary)' }}>Conversion Rate Summary</h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Deposit Rate</p>
+                <p className="text-xl font-bold" style={{ color: '#22c55e' }}>₹{(currencySettings.depositRate + currencySettings.depositMarkup).toFixed(2)}</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>per $1</p>
+              </div>
+              <div className="text-center p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Withdrawal Rate</p>
+                <p className="text-xl font-bold" style={{ color: '#ef4444' }}>₹{(currencySettings.withdrawalRate - currencySettings.withdrawalMarkup).toFixed(2)}</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>per $1</p>
+              </div>
+              <div className="text-center p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Deposit Markup</p>
+                <p className="text-xl font-bold" style={{ color: '#3b82f6' }}>₹{currencySettings.depositMarkup}</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>per $1</p>
+              </div>
+              <div className="text-center p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Withdrawal Markup</p>
+                <p className="text-xl font-bold" style={{ color: '#f59e0b' }}>₹{currencySettings.withdrawalMarkup}</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>per $1</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Filters - only show for deposits/withdrawals */}
+      {(activeTab === 'deposits' || activeTab === 'withdrawals') && (
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="relative">
@@ -230,8 +431,10 @@ const FundManagement = () => {
           Export
         </button>
       </div>
+      )}
 
-      {/* Table */}
+      {/* Table - only show for deposits/withdrawals */}
+      {(activeTab === 'deposits' || activeTab === 'withdrawals') && (
       <div 
         className="rounded-2xl overflow-hidden"
         style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
@@ -312,6 +515,7 @@ const FundManagement = () => {
           </table>
         </div>
       </div>
+      )}
 
       {/* Detail Modal */}
       {showDetailModal && selectedTx && (

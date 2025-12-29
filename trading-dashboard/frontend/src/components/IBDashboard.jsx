@@ -14,7 +14,12 @@ import {
   Loader2,
   RefreshCw,
   ExternalLink,
-  Share2
+  Share2,
+  Award,
+  ChevronRight,
+  Lock,
+  Unlock,
+  Zap
 } from 'lucide-react'
 import axios from 'axios'
 
@@ -29,6 +34,7 @@ const IBDashboard = () => {
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
 
   const getAuthHeader = () => ({
     headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
@@ -61,6 +67,15 @@ const IBDashboard = () => {
     }
   }
 
+  // Generate dynamic referral link based on current origin (auto-updates with port/domain changes)
+  const getDynamicReferralLink = () => {
+    const referralCode = profile?.referralCode || profile?.ibId
+    if (!referralCode) return ''
+    return `${window.location.origin}/register?ref=${referralCode}`
+  }
+
+  const referralLink = getDynamicReferralLink()
+
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text)
     setCopied(true)
@@ -81,6 +96,26 @@ const IBDashboard = () => {
       alert(err.response?.data?.message || 'Failed to withdraw')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleRequestUpgrade = async (level) => {
+    if (!confirm(`Request upgrade to ${level.name} level? Admin will review your request.`)) return
+    try {
+      setUpgradeLoading(true)
+      const res = await axios.post('/api/ib/request-upgrade', { requestedLevel: level.level }, getAuthHeader())
+      if (res.data.success) {
+        // Immediately update profile state for instant UI feedback
+        setProfile(prev => ({
+          ...prev,
+          upgradeRequest: res.data.data.upgradeRequest
+        }))
+        alert(res.data.message)
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to request upgrade')
+    } finally {
+      setUpgradeLoading(false)
     }
   }
 
@@ -107,36 +142,129 @@ const IBDashboard = () => {
         </button>
       </div>
 
-      {/* Referral Link Card */}
-      <div className="rounded-2xl p-6 mb-6 bg-gradient-to-r from-blue-600 to-purple-600">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-blue-100 text-sm mb-1">Your Referral Link</p>
-            <p className="text-white font-mono text-lg break-all">{profile?.referralLink}</p>
-            <p className="text-blue-200 text-sm mt-2">
-              Referral Code: <span className="font-bold text-white">{profile?.referralCode}</span>
-            </p>
+      {/* Commission & Referral Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        {/* Commission Rate Card */}
+        <div className="rounded-2xl p-6" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h3 className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Your Commission Rate</h3>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-3xl font-bold" style={{ color: '#22c55e' }}>${profile?.effectiveCommission || profile?.customCommission?.perLot || 2}<span className="text-lg font-normal">/lot</span></p>
+              <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+                Level: <span className="font-semibold" style={{ color: profile?.levelColor || '#3b82f6' }}>{profile?.levelName || 'Standard'}</span>
+                {profile?.customCommission?.enabled && <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-500">Custom Rate</span>}
+              </p>
+            </div>
+            <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ backgroundColor: `${profile?.levelColor || '#3b82f6'}20` }}>
+              <DollarSign size={28} style={{ color: profile?.levelColor || '#3b82f6' }} />
+            </div>
           </div>
+          <p className="text-xs mt-3" style={{ color: 'var(--text-muted)' }}>
+            Earn commission on every trade your referrals make. Contact support to upgrade your level.
+          </p>
+        </div>
+
+        {/* Referral Link Card */}
+        <div className="rounded-2xl p-6 bg-gradient-to-r from-blue-600 to-purple-600">
+          <p className="text-blue-100 text-sm mb-1">Your Referral Link</p>
+          <p className="text-white font-mono text-sm break-all mb-2">{referralLink}</p>
+          <p className="text-blue-200 text-xs mb-3">
+            Code: <span className="font-bold text-white">{profile?.referralCode || profile?.ibId}</span>
+          </p>
           <div className="flex gap-2">
             <button
-              onClick={() => copyToClipboard(profile?.referralLink)}
-              className="p-3 rounded-xl bg-white/20 hover:bg-white/30 text-white"
-              title="Copy Link"
+              onClick={() => copyToClipboard(referralLink)}
+              className="flex-1 py-2 rounded-xl bg-white/20 hover:bg-white/30 text-white text-sm flex items-center justify-center gap-2"
             >
-              {copied ? <CheckCircle size={20} /> : <Copy size={20} />}
+              {copied ? <CheckCircle size={16} /> : <Copy size={16} />}
+              {copied ? 'Copied!' : 'Copy Link'}
             </button>
             <button
               onClick={() => {
                 if (navigator.share) {
-                  navigator.share({ title: 'Join Hcfinvest', url: profile?.referralLink })
+                  navigator.share({ title: 'Join Hcfinvest', url: referralLink })
                 }
               }}
-              className="p-3 rounded-xl bg-white/20 hover:bg-white/30 text-white"
-              title="Share"
+              className="py-2 px-4 rounded-xl bg-white/20 hover:bg-white/30 text-white"
             >
-              <Share2 size={20} />
+              <Share2 size={16} />
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Level Progression Card */}
+      <div className="rounded-2xl p-6 mb-6" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <Award size={20} /> Commission Levels
+          </h3>
+          <span className="px-3 py-1 rounded-full text-xs bg-blue-500/20 text-blue-500">
+            Auto-Upgrade Enabled
+          </span>
+        </div>
+        
+        {/* Progress to Next Level */}
+        {profile?.nextLevel && (
+          <div className="mb-6 p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>Progress to {profile.nextLevel.name}</span>
+              <span className="text-sm font-semibold" style={{ color: profile.nextLevel.color }}>{profile.nextLevel.progressPercent}%</span>
+            </div>
+            <div className="h-3 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)' }}>
+              <div 
+                className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${profile.nextLevel.progressPercent}%`, backgroundColor: profile.nextLevel.color }}
+              />
+            </div>
+            <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+              {profile.nextLevel.referralsNeeded > 0 
+                ? `${profile.nextLevel.referralsNeeded} more referrals needed for ${profile.nextLevel.name} (${profile.nextLevel.minReferrals} total required)`
+                : `Congratulations! You've reached the requirements for ${profile.nextLevel.name}. Level will upgrade automatically.`
+              }
+            </p>
+          </div>
+        )}
+
+        {/* All Levels */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {profile?.allLevels?.map((level) => (
+            <div 
+              key={level.level}
+              className={`p-4 rounded-xl relative ${level.isCurrentLevel ? 'ring-2' : ''}`}
+              style={{ 
+                backgroundColor: level.isCurrentLevel ? `${level.color}15` : 'var(--bg-hover)',
+                borderColor: level.isCurrentLevel ? level.color : 'transparent',
+                ringColor: level.color
+              }}
+            >
+              {level.isCurrentLevel && (
+                <span className="absolute -top-2 -right-2 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500 text-white">
+                  Current
+                </span>
+              )}
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: `${level.color}30` }}>
+                  {level.isUnlocked ? <Unlock size={14} style={{ color: level.color }} /> : <Lock size={14} style={{ color: 'var(--text-muted)' }} />}
+                </div>
+                <span className="font-semibold text-sm" style={{ color: level.isUnlocked ? level.color : 'var(--text-muted)' }}>{level.name}</span>
+              </div>
+              <p className="text-xl font-bold mb-1" style={{ color: level.isUnlocked ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                ${level.commissionPerLot}<span className="text-xs font-normal">/lot</span>
+              </p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                {level.minReferrals > 0 ? `${level.minReferrals}+ referrals` : 'Default'}
+              </p>
+              {!level.isCurrentLevel && level.level > profile.commissionLevel && (
+                <div className="mt-2 py-1.5 px-2 rounded-lg text-xs text-center" style={{ backgroundColor: 'var(--bg-primary)' }}>
+                  {level.isUnlocked 
+                    ? <span className="text-green-500 font-medium">✓ Qualified</span>
+                    : <span style={{ color: 'var(--text-muted)' }}>Need {level.minReferrals - (profile?.stats?.totalReferrals || 0)} more</span>
+                  }
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
@@ -270,29 +398,34 @@ const IBDashboard = () => {
           <div className="rounded-2xl p-6" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Your Commission Model</h3>
             <div className="space-y-3">
-              <div className="flex justify-between">
-                <span style={{ color: 'var(--text-muted)' }}>Type:</span>
-                <span className="font-medium capitalize" style={{ color: 'var(--text-primary)' }}>{profile?.commissionType?.replace('_', ' ')}</span>
-              </div>
-              <div className="flex justify-between">
-                <span style={{ color: 'var(--text-muted)' }}>Rate:</span>
-                <span className="font-medium" style={{ color: '#22c55e' }}>
-                  {profile?.commissionType === 'per_lot' ? `$${profile?.commissionValue} per lot` :
-                   profile?.commissionType === 'percentage_profit' ? `${profile?.commissionValue}% of profit` :
-                   `${profile?.commissionValue}%`}
+              <div className="flex justify-between items-center">
+                <span style={{ color: 'var(--text-muted)' }}>Commission Level:</span>
+                <span className="px-3 py-1 rounded-full text-sm font-medium" style={{ backgroundColor: `${profile?.levelColor || '#3b82f6'}20`, color: profile?.levelColor || '#3b82f6' }}>
+                  {profile?.levelName || 'Standard'}
                 </span>
               </div>
-              {profile?.firstDepositCommission?.enabled && (
-                <div className="flex justify-between">
-                  <span style={{ color: 'var(--text-muted)' }}>First Deposit Bonus:</span>
-                  <span className="font-medium" style={{ color: '#22c55e' }}>{profile?.firstDepositCommission?.percentage}%</span>
+              <div className="flex justify-between items-center">
+                <span style={{ color: 'var(--text-muted)' }}>Commission Rate:</span>
+                <span className="text-xl font-bold" style={{ color: '#22c55e' }}>
+                  ${profile?.effectiveCommission || 2}/lot
+                </span>
+              </div>
+              {profile?.customCommission?.enabled && (
+                <div className="flex justify-between items-center">
+                  <span style={{ color: 'var(--text-muted)' }}>Custom Rate:</span>
+                  <span className="px-2 py-1 rounded-full text-xs bg-yellow-500/20 text-yellow-500">Active</span>
                 </div>
               )}
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span style={{ color: 'var(--text-muted)' }}>Status:</span>
                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${profile?.status === 'active' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
                   {profile?.status}
                 </span>
+              </div>
+              <div className="pt-3 mt-3" style={{ borderTop: '1px solid var(--border-color)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Earn ${profile?.effectiveCommission || 2} for every lot traded by your referrals. Contact support to upgrade your level.
+                </p>
               </div>
             </div>
           </div>

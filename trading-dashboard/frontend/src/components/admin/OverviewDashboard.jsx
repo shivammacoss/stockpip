@@ -10,7 +10,11 @@ import {
   BarChart3,
   PieChart,
   Clock,
-  Loader2
+  Loader2,
+  Wallet,
+  CreditCard,
+  Percent,
+  RefreshCw
 } from 'lucide-react'
 import axios from 'axios'
 
@@ -22,7 +26,24 @@ const OverviewDashboard = () => {
     pendingDeposits: 0,
     pendingWithdrawals: 0,
     totalEarnings: 0,
-    brokerProfit: 0
+    brokerProfit: 0,
+    liveAccountBalance: 0,
+    demoAccountBalance: 0,
+    liveAccountCount: 0,
+    demoAccountCount: 0,
+    totalDeposits: 0,
+    totalWithdrawals: 0,
+    totalFees: 0,
+    totalCommission: 0,
+    totalSpread: 0,
+    openTradesCount: 0,
+    closedTradesCount: 0,
+    currencySettings: {
+      depositRate: 83,
+      withdrawalRate: 83,
+      depositMarkup: 0,
+      withdrawalMarkup: 0
+    }
   })
   const [recentUsers, setRecentUsers] = useState([])
   const [recentTrades, setRecentTrades] = useState([])
@@ -107,11 +128,18 @@ const OverviewDashboard = () => {
 
   const statsDisplay = [
     { label: 'Total Users', value: stats.totalUsers?.toString() || '0', icon: Users, color: '#3b82f6' },
-    { label: 'Total User Fund', value: `$${(stats.totalUserFund || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, icon: DollarSign, color: '#22c55e' },
-    { label: 'Deposit Requests', value: stats.pendingDeposits?.toString() || '0', icon: ArrowUpRight, color: '#22c55e' },
-    { label: 'Withdrawal Requests', value: stats.pendingWithdrawals?.toString() || '0', icon: ArrowDownRight, color: '#ef4444' },
-    { label: 'Total Earnings', value: `$${(stats.totalEarnings || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, icon: BarChart3, color: '#8b5cf6' },
-    { label: "Broker's Profit", value: `$${(stats.brokerProfit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, icon: PieChart, color: stats.brokerProfit >= 0 ? '#22c55e' : '#ef4444' },
+    { label: 'User Wallet Balance', value: `$${(stats.totalUserFund || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, icon: Wallet, color: '#22c55e' },
+    { label: 'Live Account Balance', value: `$${(stats.liveAccountBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, icon: CreditCard, color: '#3b82f6' },
+    { label: 'Demo Account Balance', value: `$${(stats.demoAccountBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, icon: CreditCard, color: '#6b7280' },
+    { label: 'Pending Deposits', value: stats.pendingDeposits?.toString() || '0', icon: ArrowDownRight, color: '#22c55e' },
+    { label: 'Pending Withdrawals', value: stats.pendingWithdrawals?.toString() || '0', icon: ArrowUpRight, color: '#ef4444' },
+  ]
+
+  const earningsDisplay = [
+    { label: 'Total Fees', value: `$${(stats.totalFees || 0).toFixed(2)}`, color: '#8b5cf6' },
+    { label: 'Total Commission', value: `$${(stats.totalCommission || 0).toFixed(2)}`, color: '#f59e0b' },
+    { label: 'Total Spread', value: `$${(stats.totalSpread || 0).toFixed(2)}`, color: '#3b82f6' },
+    { label: 'Broker Profit', value: `$${(stats.brokerProfit || 0).toFixed(2)}`, color: stats.brokerProfit >= 0 ? '#22c55e' : '#ef4444' },
   ]
 
   if (loading) {
@@ -144,6 +172,85 @@ const OverviewDashboard = () => {
             <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{stat.label}</p>
           </div>
         ))}
+      </div>
+
+      {/* Earnings & Currency Settings Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Earnings Breakdown */}
+        <div className="p-5 rounded-2xl" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h3 className="font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <BarChart3 size={18} style={{ color: '#8b5cf6' }} />
+            Earnings Breakdown
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            {earningsDisplay.map((item, index) => (
+              <div key={index} className="p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.label}</p>
+                <p className="text-xl font-bold" style={{ color: item.color }}>{item.value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 p-3 rounded-xl" style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)' }}>
+            <div className="flex justify-between items-center">
+              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>Total Earnings</span>
+              <span className="text-lg font-bold" style={{ color: '#22c55e' }}>${(stats.totalEarnings || 0).toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Currency Settings */}
+        <div className="p-5 rounded-2xl" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h3 className="font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <DollarSign size={18} style={{ color: '#3b82f6' }} />
+            Currency Conversion Rates (INR ⇄ USD)
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Deposit Rate</p>
+              <p className="text-xl font-bold" style={{ color: '#22c55e' }}>
+                ₹{((stats.currencySettings?.depositRate || 83) + (stats.currencySettings?.depositMarkup || 0)).toFixed(2)}
+              </p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>per $1 (Markup: ₹{stats.currencySettings?.depositMarkup || 0})</p>
+            </div>
+            <div className="p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Withdrawal Rate</p>
+              <p className="text-xl font-bold" style={{ color: '#ef4444' }}>
+                ₹{((stats.currencySettings?.withdrawalRate || 83) - (stats.currencySettings?.withdrawalMarkup || 0)).toFixed(2)}
+              </p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>per $1 (Markup: ₹{stats.currencySettings?.withdrawalMarkup || 0})</p>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <div className="p-3 rounded-xl" style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)' }}>
+              <p className="text-xs" style={{ color: '#22c55e' }}>Total Deposits</p>
+              <p className="text-lg font-bold" style={{ color: '#22c55e' }}>${(stats.totalDeposits || 0).toLocaleString()}</p>
+            </div>
+            <div className="p-3 rounded-xl" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)' }}>
+              <p className="text-xs" style={{ color: '#ef4444' }}>Total Withdrawals</p>
+              <p className="text-lg font-bold" style={{ color: '#ef4444' }}>${(stats.totalWithdrawals || 0).toLocaleString()}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Trading Stats Row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="p-4 rounded-2xl" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Open Trades</p>
+          <p className="text-2xl font-bold" style={{ color: '#3b82f6' }}>{stats.openTradesCount || 0}</p>
+        </div>
+        <div className="p-4 rounded-2xl" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Closed Trades</p>
+          <p className="text-2xl font-bold" style={{ color: '#6b7280' }}>{stats.closedTradesCount || 0}</p>
+        </div>
+        <div className="p-4 rounded-2xl" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Live Accounts</p>
+          <p className="text-2xl font-bold" style={{ color: '#22c55e' }}>{stats.liveAccountCount || 0}</p>
+        </div>
+        <div className="p-4 rounded-2xl" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Demo Accounts</p>
+          <p className="text-2xl font-bold" style={{ color: '#6b7280' }}>{stats.demoAccountCount || 0}</p>
+        </div>
       </div>
 
       {/* Main Content Grid */}

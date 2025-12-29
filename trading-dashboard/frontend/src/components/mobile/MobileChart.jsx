@@ -20,7 +20,7 @@ const MobileChart = () => {
   const activeTab = chartTabs.find(t => t.id === activeTabId) || chartTabs[0]
   const selectedSymbol = activeTab?.symbol || 'XAUUSD'
 
-  // Get decimals based on symbol
+  // Get decimals based on symbol (matching instrument settings)
   const getDecimals = (symbol) => {
     if (!symbol) return 5
     if (symbol.includes('JPY')) return 3
@@ -28,13 +28,17 @@ const MobileChart = () => {
     if (symbol.includes('ETH')) return 2
     if (symbol.includes('XAU')) return 2
     if (symbol.includes('XAG')) return 3
+    if (symbol.includes('US30') || symbol.includes('US500') || symbol.includes('US100') || symbol.includes('DE30') || symbol.includes('UK100')) return 1
+    if (symbol.includes('JP225')) return 0
+    if (symbol.includes('OIL')) return 2
+    if (symbol.includes('XNG')) return 3
     if (symbol.includes('LTC') || symbol.includes('XRP') || symbol.includes('DOGE') || symbol.includes('SOL')) return 4
     return 5
   }
 
   const formatPrice = (price, symbol) => {
     if (!price) return '---'
-    return price.toFixed(getDecimals(symbol))
+    return parseFloat(price.toFixed(getDecimals(symbol))).toString()
   }
 
   useEffect(() => {
@@ -84,7 +88,24 @@ const MobileChart = () => {
     }
   }
 
+  // Check if trading is locked (kill switch)
+  const isTradingLocked = () => {
+    const savedLockEnd = localStorage.getItem('tradingLockEnd')
+    if (savedLockEnd) {
+      const endTime = new Date(savedLockEnd)
+      if (endTime > new Date()) return true
+      else localStorage.removeItem('tradingLockEnd')
+    }
+    return false
+  }
+
   const handleTrade = async (type) => {
+    // Check kill switch
+    if (isTradingLocked()) {
+      alert('Trading is currently locked. Kill switch is active.')
+      return
+    }
+
     const activeAccount = JSON.parse(localStorage.getItem('activeTradingAccount') || '{}')
     if (!activeAccount._id) {
       alert('Please select a trading account first')

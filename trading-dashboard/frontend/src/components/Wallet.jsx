@@ -24,10 +24,10 @@ import {
 } from 'lucide-react'
 import axios from 'axios'
 
-// Currency exchange rates (approximate - would be fetched from API in production)
-const EXCHANGE_RATES = {
+// Default currency exchange rates (will be fetched from API)
+const DEFAULT_EXCHANGE_RATES = {
   USD: 1,
-  INR: 83.50,
+  INR: 83,
   EUR: 0.92,
   GBP: 0.79,
   AUD: 1.53,
@@ -60,6 +60,9 @@ const Wallet = () => {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [copied, setCopied] = useState('')
+  const [exchangeRates, setExchangeRates] = useState(DEFAULT_EXCHANGE_RATES)
+  const [selectedBankIndex, setSelectedBankIndex] = useState(0)
+  const [selectedUpiIndex, setSelectedUpiIndex] = useState(0)
   
   // Deposit form
   const [depositAmount, setDepositAmount] = useState('')
@@ -70,10 +73,10 @@ const Wallet = () => {
   const [transactionId, setTransactionId] = useState('')
   const [screenshot, setScreenshot] = useState('')
   
-  // Calculate USD equivalent
+  // Calculate USD equivalent using dynamic rates
   const getUSDAmount = (amount, currency) => {
     if (!amount || isNaN(amount)) return 0
-    const rate = EXCHANGE_RATES[currency] || 1
+    const rate = exchangeRates[currency] || 1
     return parseFloat(amount) / rate
   }
   
@@ -104,17 +107,26 @@ const Wallet = () => {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [balanceRes, settingsRes, accountsRes, transRes] = await Promise.all([
+      const [balanceRes, settingsRes, accountsRes, transRes, ratesRes] = await Promise.all([
         axios.get('/api/wallet/balance', getAuthHeader()),
         axios.get('/api/wallet/bank-settings', getAuthHeader()),
         axios.get('/api/wallet/bank-accounts', getAuthHeader()),
-        axios.get('/api/wallet/transactions?limit=20', getAuthHeader())
+        axios.get('/api/wallet/transactions?limit=20', getAuthHeader()),
+        axios.get('/api/wallet/currency-rates') // Public endpoint - no auth needed
       ])
 
       if (balanceRes.data.success) setBalance(balanceRes.data.data.balance)
       if (settingsRes.data.success) setBankSettings(settingsRes.data.data)
       if (accountsRes.data.success) setUserBankAccounts(accountsRes.data.data)
       if (transRes.data.success) setTransactions(transRes.data.data)
+      
+      // Update exchange rates with dynamic values from admin settings
+      if (ratesRes.data.success) {
+        setExchangeRates(prev => ({
+          ...prev,
+          INR: ratesRes.data.data.depositRate || 83 // Use deposit rate for INR conversion
+        }))
+      }
     } catch (err) {
       console.error('Failed to fetch wallet data:', err)
     } finally {
@@ -152,7 +164,7 @@ const Wallet = () => {
         amount: usdEquivalent, // Send USD equivalent
         originalAmount: parseFloat(depositAmount),
         originalCurrency: depositCurrency,
-        exchangeRate: EXCHANGE_RATES[depositCurrency],
+        exchangeRate: exchangeRates[depositCurrency],
         paymentMethod,
         utrNumber,
         transactionId,
@@ -319,71 +331,192 @@ const Wallet = () => {
                 <div className="space-y-3">
                   {paymentMethod === 'bank' && (
                     <>
-                      {bankSettings.bankName && (
-                        <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
-                          <div>
-                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Bank Name</p>
-                            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{bankSettings.bankName}</p>
+                      {/* Bank Account Selection */}
+                      {bankSettings.bankAccounts?.length > 0 ? (
+                        <>
+                          {bankSettings.bankAccounts.filter(b => b.isActive).length > 1 && (
+                            <div className="mb-3">
+                              <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Select Bank Account</p>
+                              <div className="flex flex-wrap gap-2">
+                                {bankSettings.bankAccounts.filter(b => b.isActive).map((bank, idx) => (
+                                  <button
+                                    key={idx}
+                                    onClick={() => setSelectedBankIndex(idx)}
+                                    className="px-3 py-2 rounded-lg text-sm font-medium"
+                                    style={{ 
+                                      backgroundColor: selectedBankIndex === idx ? 'rgba(59, 130, 246, 0.2)' : 'var(--bg-hover)',
+                                      color: selectedBankIndex === idx ? '#3b82f6' : 'var(--text-secondary)',
+                                      border: selectedBankIndex === idx ? '1px solid #3b82f6' : '1px solid var(--border-color)'
+                                    }}
+                                  >
+                                    {bank.bankName}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {(() => {
+                            const activeBanks = bankSettings.bankAccounts.filter(b => b.isActive)
+                            const selectedBank = activeBanks[selectedBankIndex] || activeBanks[0]
+                            if (!selectedBank) return null
+                            return (
+                              <>
+                                <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                                  <div>
+                                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Bank Name</p>
+                                    <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{selectedBank.bankName}</p>
+                                  </div>
+                                  <button onClick={() => copyToClipboard(selectedBank.bankName, 'bankName')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                                    {copied === 'bankName' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                                  </button>
+                                </div>
+                                <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                                  <div>
+                                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Account Number</p>
+                                    <p className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>{selectedBank.accountNumber}</p>
+                                  </div>
+                                  <button onClick={() => copyToClipboard(selectedBank.accountNumber, 'accountNumber')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                                    {copied === 'accountNumber' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                                  </button>
+                                </div>
+                                <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                                  <div>
+                                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Account Holder</p>
+                                    <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{selectedBank.accountHolderName}</p>
+                                  </div>
+                                  <button onClick={() => copyToClipboard(selectedBank.accountHolderName, 'holder')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                                    {copied === 'holder' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                                  </button>
+                                </div>
+                                <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                                  <div>
+                                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>IFSC Code</p>
+                                    <p className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>{selectedBank.ifscCode}</p>
+                                  </div>
+                                  <button onClick={() => copyToClipboard(selectedBank.ifscCode, 'ifsc')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                                    {copied === 'ifsc' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                                  </button>
+                                </div>
+                              </>
+                            )
+                          })()}
+                        </>
+                      ) : bankSettings.bankName ? (
+                        <>
+                          <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                            <div>
+                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Bank Name</p>
+                              <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{bankSettings.bankName}</p>
+                            </div>
+                            <button onClick={() => copyToClipboard(bankSettings.bankName, 'bankName')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                              {copied === 'bankName' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                            </button>
                           </div>
-                          <button onClick={() => copyToClipboard(bankSettings.bankName, 'bankName')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
-                            {copied === 'bankName' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
-                          </button>
-                        </div>
-                      )}
-                      {bankSettings.accountNumber && (
-                        <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
-                          <div>
-                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Account Number</p>
-                            <p className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>{bankSettings.accountNumber}</p>
+                          <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                            <div>
+                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Account Number</p>
+                              <p className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>{bankSettings.accountNumber}</p>
+                            </div>
+                            <button onClick={() => copyToClipboard(bankSettings.accountNumber, 'accountNumber')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                              {copied === 'accountNumber' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                            </button>
                           </div>
-                          <button onClick={() => copyToClipboard(bankSettings.accountNumber, 'accountNumber')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
-                            {copied === 'accountNumber' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
-                          </button>
-                        </div>
-                      )}
-                      {bankSettings.accountHolderName && (
-                        <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
-                          <div>
-                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Account Holder</p>
-                            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{bankSettings.accountHolderName}</p>
+                          <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                            <div>
+                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Account Holder</p>
+                              <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{bankSettings.accountHolderName}</p>
+                            </div>
+                            <button onClick={() => copyToClipboard(bankSettings.accountHolderName, 'holder')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                              {copied === 'holder' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                            </button>
                           </div>
-                          <button onClick={() => copyToClipboard(bankSettings.accountHolderName, 'accountHolderName')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
-                            {copied === 'accountHolderName' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
-                          </button>
-                        </div>
-                      )}
-                      {bankSettings.ifscCode && (
-                        <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
-                          <div>
-                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>IFSC Code</p>
-                            <p className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>{bankSettings.ifscCode}</p>
+                          <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                            <div>
+                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>IFSC Code</p>
+                              <p className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>{bankSettings.ifscCode}</p>
+                            </div>
+                            <button onClick={() => copyToClipboard(bankSettings.ifscCode, 'ifsc')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                              {copied === 'ifsc' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                            </button>
                           </div>
-                          <button onClick={() => copyToClipboard(bankSettings.ifscCode, 'ifscCode')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
-                            {copied === 'ifscCode' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
-                          </button>
-                        </div>
+                        </>
+                      ) : (
+                        <p className="text-center py-4" style={{ color: 'var(--text-muted)' }}>No bank accounts available</p>
                       )}
                     </>
                   )}
 
                   {paymentMethod === 'upi' && (
                     <>
-                      {bankSettings.upiId && (
-                        <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
-                          <div>
-                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>UPI ID</p>
-                            <p className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>{bankSettings.upiId}</p>
+                      {/* UPI Selection */}
+                      {bankSettings.upiAccounts?.length > 0 ? (
+                        <>
+                          {bankSettings.upiAccounts.filter(u => u.isActive).length > 1 && (
+                            <div className="mb-3">
+                              <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Select UPI</p>
+                              <div className="flex flex-wrap gap-2">
+                                {bankSettings.upiAccounts.filter(u => u.isActive).map((upi, idx) => (
+                                  <button
+                                    key={idx}
+                                    onClick={() => setSelectedUpiIndex(idx)}
+                                    className="px-3 py-2 rounded-lg text-sm font-medium"
+                                    style={{ 
+                                      backgroundColor: selectedUpiIndex === idx ? 'rgba(139, 92, 246, 0.2)' : 'var(--bg-hover)',
+                                      color: selectedUpiIndex === idx ? '#8b5cf6' : 'var(--text-secondary)',
+                                      border: selectedUpiIndex === idx ? '1px solid #8b5cf6' : '1px solid var(--border-color)'
+                                    }}
+                                  >
+                                    {upi.upiName || upi.upiId}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {(() => {
+                            const activeUpis = bankSettings.upiAccounts.filter(u => u.isActive)
+                            const selectedUpi = activeUpis[selectedUpiIndex] || activeUpis[0]
+                            if (!selectedUpi) return null
+                            return (
+                              <>
+                                <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                                  <div>
+                                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>UPI ID</p>
+                                    <p className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>{selectedUpi.upiId}</p>
+                                  </div>
+                                  <button onClick={() => copyToClipboard(selectedUpi.upiId, 'upiId')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                                    {copied === 'upiId' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                                  </button>
+                                </div>
+                                {selectedUpi.qrCode && (
+                                  <div className="flex flex-col items-center p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                                    <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>Scan QR Code</p>
+                                    <img src={selectedUpi.qrCode} alt="QR Code" className="w-48 h-48 rounded-lg" />
+                                  </div>
+                                )}
+                              </>
+                            )
+                          })()}
+                        </>
+                      ) : bankSettings.upiId ? (
+                        <>
+                          <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                            <div>
+                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>UPI ID</p>
+                              <p className="font-medium font-mono" style={{ color: 'var(--text-primary)' }}>{bankSettings.upiId}</p>
+                            </div>
+                            <button onClick={() => copyToClipboard(bankSettings.upiId, 'upiId')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
+                              {copied === 'upiId' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
+                            </button>
                           </div>
-                          <button onClick={() => copyToClipboard(bankSettings.upiId, 'upiId')} className="p-2 rounded-lg" style={{ backgroundColor: 'var(--bg-card)' }}>
-                            {copied === 'upiId' ? <Check size={16} style={{ color: '#22c55e' }} /> : <Copy size={16} style={{ color: 'var(--text-secondary)' }} />}
-                          </button>
-                        </div>
-                      )}
-                      {bankSettings.qrCode && (
-                        <div className="flex flex-col items-center p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
-                          <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>Scan QR Code</p>
-                          <img src={bankSettings.qrCode} alt="QR Code" className="w-48 h-48 rounded-lg" />
-                        </div>
+                          {bankSettings.qrCode && (
+                            <div className="flex flex-col items-center p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                              <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>Scan QR Code</p>
+                              <img src={bankSettings.qrCode} alt="QR Code" className="w-48 h-48 rounded-lg" />
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-center py-4" style={{ color: 'var(--text-muted)' }}>No UPI accounts available</p>
                       )}
                     </>
                   )}
@@ -422,7 +555,7 @@ const Wallet = () => {
                     
                     {showCurrencyDropdown && (
                       <div className="absolute top-full left-0 right-0 mt-2 rounded-xl shadow-xl z-20 max-h-64 overflow-y-auto" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                        {Object.keys(EXCHANGE_RATES).map((currency) => (
+                        {Object.keys(exchangeRates).map((currency) => (
                           <button
                             key={currency}
                             type="button"
@@ -438,7 +571,7 @@ const Wallet = () => {
                               <span style={{ color: 'var(--text-muted)' }}>({CURRENCY_SYMBOLS[currency]})</span>
                             </div>
                             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                              1 USD = {EXCHANGE_RATES[currency]} {currency}
+                              1 USD = {exchangeRates[currency]} {currency}
                             </span>
                           </button>
                         ))}
@@ -481,7 +614,7 @@ const Wallet = () => {
                           ${usdEquivalent.toFixed(2)}
                         </p>
                         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          Rate: 1 USD = {EXCHANGE_RATES[depositCurrency]} {depositCurrency}
+                          Rate: 1 USD = {exchangeRates[depositCurrency]} {depositCurrency}
                         </p>
                       </div>
                     </div>
